@@ -1,9 +1,12 @@
 # The Settlers II 10th Anniversary decrypter
 decrypts and encrypts the assets of The Settlers II 10th Anniversary.
 
+
 ## How To Build
 Have a c++ compiler installed and run `g++ decrypter.cpp -o decrypter`.
+
 *Note: you need at least c++ 17 to be able to compile it*
+
 
 ## Troubleshooting
 If it doesn't work for you:
