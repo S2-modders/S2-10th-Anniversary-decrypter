@@ -4,6 +4,8 @@
 #include <string>
 #include <vector>
 #include <cstddef>
+#include <algorithm> // for std::transform
+#include <cctype>    // for std::tolower
 
 typedef unsigned int uint;
 using namespace std; 
@@ -98,10 +100,15 @@ struct Random {
 
 };
 
-vector<byte> makeKey(string& filename) {
+vector<byte> makeKey(string& filename, bool randomize) {
     uint keyInt[4] = {0xca4659c9, 0xa4ff0d9, 0xb8aa00a1, 0x6bdbe8cb};
     vector<byte> key((byte*) keyInt, ((byte*)keyInt + 16));
-    Random random(genCrc((byte*)filename.data(), filename.size()));
+    if (!randomize) return key;
+    string lowercaseFilename;
+    lowercaseFilename.resize(filename.size());
+    transform(filename.begin(), filename.end(), lowercaseFilename.begin(), [](char c) { return tolower(c); });
+
+    Random random(genCrc((byte*)lowercaseFilename.data(), lowercaseFilename.size()));
     for (uint i = 0; i < 16; i++) {
         key[i] ^= random.nextByte();
     }
@@ -126,6 +133,9 @@ void decrypt(vector<byte>& data, vector<byte>& key) {
 vector<byte> decopress(vector<byte>& compressed) {
     vector<byte> decompressed;
     decompressed.reserve(compressed.size()); 
+    byte copyBuffer[0x400];
+    fill(begin(copyBuffer),end(copyBuffer),(byte)0x20);
+    uint copyBufferIdx = 0x3f0;
     bool twoByte = false;
     byte byte1;
     uint mode = 0;
@@ -134,15 +144,18 @@ vector<byte> decopress(vector<byte>& compressed) {
             twoByte = false;
             uint num = (uint)byte1 | ((uint)curr & 0xf0) << 4;
             for (int j = 0; j < ((uint)curr & 0xf) + 3; j++) {
-                uint ringOffset =  (j + 16 + num) & 0x3ff;
-                uint arrayOffset = ringOffset + (decompressed.size() & (0xffffffff - 0x3ff));
-                decompressed.push_back(decompressed[arrayOffset >= decompressed.size() ? (arrayOffset - 0x400) : arrayOffset]);
+                byte copied = copyBuffer[(j + num) & 0x3ff];
+                decompressed.push_back(copied);
+                copyBuffer[copyBufferIdx++] = copied;
+                copyBufferIdx &= 0x3ff;
             }
         } else if ((mode & 0x100) == 0) {
             mode = (uint)curr | 0xff00;
         } else {
             if ((mode & 1) == 1) {
                 decompressed.push_back(curr);
+                copyBuffer[copyBufferIdx++] = curr;
+                copyBufferIdx &= 0x3ff;
             } else {
                 twoByte = true;
                 byte1 = curr;
@@ -160,47 +173,59 @@ void compress(vector<byte>& uncompressed) {
     }
 }
 
+void writeFile(filesystem::path path, vector<byte> filecontents) {
+        ofstream outFile(path, ios::binary);
+        if (!outFile.is_open()) {
+            cerr << "Error: Could not open the file " << path << " for writing." << endl;
+            return;
+        }
+        outFile.write(reinterpret_cast<const char*>(filecontents.data()), filecontents.size());
+        if (outFile.fail()) {
+             cerr << "Error: Failed to write to the file " << path << endl;
+        }
+        outFile.close();
+}
 
-vector<byte> dec(vector<byte>& filecontents, filesystem::path& path) {
-    size_t cmp = path.filename().string().find(".cmp");
-    string filename = cmp == string::npos ? path.filename().string() : path.filename().string().erase(cmp, 4);
-    vector<byte> key = makeKey(filename);
+void dec(vector<byte>& filecontents, filesystem::path& path) {
+    string filename = path.filename().string();
+    size_t cmp = filename.find(".cmp");
+    filename = cmp == string::npos ? filename : filename.erase(cmp, 4);
 
+    vector<byte> key = makeKey(filename, path.extension().string() != ".s2m" && path.extension().string() != ".sav");
     uint crc = genCrc(key.data(), key.size());
     uint expectedCrc = ((uint*)filecontents.data())[3];
     if (crc != expectedCrc) {
-        cout << hex << "filename crc (" << crc << ") missmatch for file " << filename << "! using crc in file (" << expectedCrc << ")!" << endl;
-        crc = expectedCrc;
+        cerr << hex << "filename crc (" << crc << ") missmatch for file " << path << "! excpected: " << expectedCrc << endl;
+        return;
     }
 
     vector<byte> data(filecontents.begin() + 20, filecontents.end());
     decrypt(data, key);
     vector<byte> result = decopress(data);
-  
 
     crc = genCrc(result.data(), result.size());
     expectedCrc = ((uint*)filecontents.data())[2];
     if (crc != expectedCrc) {
-        cout << hex << "filedata crc (" << crc << ") missmatch for file " << filename << "! excpected: " << expectedCrc << endl;
+        cerr << hex << "filedata crc (" << crc << ") missmatch for file " << path << "! excpected: " << expectedCrc << endl;
     }
 
     uint size = result.size();
     uint expcetedSize = ((uint*)filecontents.data())[4];
     if (size != expcetedSize) {
-        cout << dec << "file size (" << size << ") missmatch for file " << filename << "! excpected: " << expcetedSize << endl;
+        cerr << dec << "file size (" << size << ") missmatch for file " << path << "! excpected: " << expcetedSize << endl;
     }
 
     path.replace_filename(filename);
     path.replace_extension(".dec" + path.extension().string());
 
-    return result;
+    writeFile(path, result);
 }
 
-vector<byte> enc(vector<byte>& filecontents, filesystem::path& path) {
-    size_t dec = path.filename().string().find(".dec");
-    string filename = dec == string::npos ? path.filename().string() : path.filename().string().erase(dec, 4);
-
-    vector<byte> key = makeKey(filename);
+void enc(vector<byte>& filecontents, filesystem::path& path) {
+    string filename = path.filename().string();
+    size_t dec = filename.find(".dec");
+    filename = dec == string::npos ? filename : filename.erase(dec, 4);
+    vector<byte> key = makeKey(filename, path.extension().string() != ".s2m" && path.extension().string() != ".sav");
 
     uint magic = 0x06091812;
     uint fcc = 0x30306372;
@@ -216,33 +241,40 @@ vector<byte> enc(vector<byte>& filecontents, filesystem::path& path) {
     path.replace_filename(filename);
     path.replace_extension(".cmp" + path.extension().string());
 
-    return filecontents;
+    writeFile(path, filecontents);
 }
 
+vector<byte> readFile(filesystem::path path) {
+    ifstream file(path, ios::binary | ios::ate);
+    streamoff size = (streamoff) file.tellg();
+    vector<byte> filecontents(size);
+    file.seekg(0, ios::beg);
+    file.read(reinterpret_cast<char*>(filecontents.data()), size);
+    file.close();
+    return filecontents;
+}
 
 int main(int argc, char* argv[]) {
     for (int i = 1; i < argc; ++i) {
         filesystem::path path(argv[i]);
-        ifstream file(path, ios::binary | ios::ate);
-        streamoff size = (streamoff) file.tellg();
-        vector<byte> filecontents(size);
-        file.seekg(0, ios::beg);
-        file.read(reinterpret_cast<char*>(filecontents.data()), size);
-        file.close();
-
-        uint fcc = 0x30306372;
-        vector<byte> result = filecontents.size() >= 20 && ((uint*)filecontents.data())[1] == fcc ? dec(filecontents, path) : enc(filecontents, path);
-
-        ofstream outFile(path, ios::binary);
-        if (!outFile.is_open()) {
-            std::cerr << "Error: Could not open the file " << path << " for writing." << std::endl;
-            continue;
+        if (is_directory(path)) {
+            for (const auto& entry : filesystem::recursive_directory_iterator(path)) {
+                if (entry.is_regular_file()) {
+                    filesystem::path currPath = entry.path();
+                    vector<byte> filecontents = readFile(currPath);
+                    if (filecontents.size() >= 20 && ((uint*)filecontents.data())[1] == 0x30306372) {
+                        dec(filecontents, currPath);
+                    }
+                }
+            }
+        } else { 
+            vector<byte> filecontents = readFile(path);
+            if (filecontents.size() >= 20 && ((uint*)filecontents.data())[1] == 0x30306372) {
+                dec(filecontents, path);
+            } else {
+                enc(filecontents, path);
+            }
         }
-        outFile.write(reinterpret_cast<const char*>(result.data()), result.size());
-        if (outFile.fail()) {
-             std::cerr << "Error: Failed to write to the file " << path << std::endl;
-        }
-        outFile.close();
        
     }
     return 0;
