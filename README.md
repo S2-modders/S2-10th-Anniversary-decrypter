@@ -1,4 +1,4 @@
-# The Settlers II 10th Anniversary decrypter
+# The Settlers II 10th Anniversary and RoC/AdK decrypter/encrypter
 decrypts and encrypts the assets of The Settlers II 10th Anniversary.
 
 
