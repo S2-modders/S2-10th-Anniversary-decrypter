@@ -100,9 +100,10 @@ struct Random {
 
 };
 
-vector<byte> makeKey(string& filename, bool randomize) {
+vector<byte> makeKey(string& filename, bool randomize, bool adk) {
+    uint keyIntAdK[4] = {0xbdc28cbd, 0xf84b6730, 0xf91b9bb4, 0xf42e82f6};
     uint keyInt[4] = {0xca4659c9, 0xa4ff0d9, 0xb8aa00a1, 0x6bdbe8cb};
-    vector<byte> key((byte*) keyInt, ((byte*)keyInt + 16));
+    vector<byte> key((byte*) (adk ?  keyIntAdK : keyInt), ((byte*)(adk ?  keyIntAdK : keyInt) + 16));
     if (!randomize) return key;
     string lowercaseFilename;
     lowercaseFilename.resize(filename.size());
@@ -136,12 +137,12 @@ vector<byte> decopress(vector<byte>& compressed) {
     byte copyBuffer[0x400];
     fill(begin(copyBuffer),end(copyBuffer),(byte)0x20);
     uint copyBufferIdx = 0x3f0;
-    bool twoByte = false;
+    bool copy = false;
     byte byte1;
     uint mode = 0;
     for (byte curr : compressed) {
-        if (twoByte) {
-            twoByte = false;
+        if (copy) {
+            copy = false;
             uint num = (uint)byte1 | ((uint)curr & 0xf0) << 4;
             for (int j = 0; j < ((uint)curr & 0xf) + 3; j++) {
                 byte copied = copyBuffer[(j + num) & 0x3ff];
@@ -157,16 +158,16 @@ vector<byte> decopress(vector<byte>& compressed) {
                 copyBuffer[copyBufferIdx++] = curr;
                 copyBufferIdx &= 0x3ff;
             } else {
-                twoByte = true;
+                copy = true;
                 byte1 = curr;
             }
             mode >>= 1;
         }
     }
     return decompressed;
-
 }
 
+// TODO: implement compression
 void compress(vector<byte>& uncompressed) {
     for (int i = 0; i < uncompressed.size(); i += 9) {
         uncompressed.insert(uncompressed.begin() + i, (byte)0xff);
@@ -186,12 +187,12 @@ void writeFile(filesystem::path path, vector<byte> filecontents) {
         outFile.close();
 }
 
-void dec(vector<byte>& filecontents, filesystem::path& path) {
+void dec(vector<byte>& filecontents, filesystem::path& path, bool adk) {
     string filename = path.filename().string();
     size_t cmp = filename.find(".cmp");
     filename = cmp == string::npos ? filename : filename.erase(cmp, 4);
 
-    vector<byte> key = makeKey(filename, path.extension().string() != ".s2m" && path.extension().string() != ".sav");
+    vector<byte> key = makeKey(filename, path.extension().string() != ".s2m" && path.extension().string() != ".sav", adk);
     uint crc = genCrc(key.data(), key.size());
     uint expectedCrc = ((uint*)filecontents.data())[3];
     if (crc != expectedCrc) {
@@ -216,19 +217,25 @@ void dec(vector<byte>& filecontents, filesystem::path& path) {
     }
 
     path.replace_filename(filename);
-    path.replace_extension(".dec" + path.extension().string());
+    path.replace_extension((adk ? ".adk" : ".dng") + path.extension().string());
 
     writeFile(path, result);
 }
 
 void enc(vector<byte>& filecontents, filesystem::path& path) {
     string filename = path.filename().string();
-    size_t dec = filename.find(".dec");
-    filename = dec == string::npos ? filename : filename.erase(dec, 4);
-    vector<byte> key = makeKey(filename, path.extension().string() != ".s2m" && path.extension().string() != ".sav");
+    size_t adk = filename.find(".adk");
+    size_t dng = filename.find(".dng");
+    filename = adk == string::npos ? filename : filename.erase(adk, 4);
+    filename = dng == string::npos ? filename : filename.erase(dng, 4);
+    if (adk == dng || (dng != string::npos && adk != string::npos)) {
+        cerr << "can't determine filetype for " << path << endl;
+        return;
+    }
+    vector<byte> key = makeKey(filename, path.extension().string() != ".s2m" && path.extension().string() != ".sav", adk != string::npos);
 
     uint magic = 0x06091812;
-    uint fcc = 0x30306372;
+    uint fcc = adk ? 0x6b646173 : 0x30306372;
     uint filecrc = genCrc(filecontents.data(), filecontents.size());
     uint crc = genCrc(key.data(), key.size());
     uint size = filecontents.size();
@@ -262,15 +269,19 @@ int main(int argc, char* argv[]) {
                 if (entry.is_regular_file()) {
                     filesystem::path currPath = entry.path();
                     vector<byte> filecontents = readFile(currPath);
-                    if (filecontents.size() >= 20 && ((uint*)filecontents.data())[1] == 0x30306372) {
-                        dec(filecontents, currPath);
+                    uint fcc = ((uint*)filecontents.data())[1];
+                    if (filecontents.size() >= 20 && (fcc == 0x30306372 || fcc == 0x6b646173)) {
+                        dec(filecontents, currPath, fcc == 0x6b646173);
+                    } else {
+                        // enc(filecontents, currPath);
                     }
                 }
             }
         } else { 
             vector<byte> filecontents = readFile(path);
-            if (filecontents.size() >= 20 && ((uint*)filecontents.data())[1] == 0x30306372) {
-                dec(filecontents, path);
+                uint fcc = ((uint*)filecontents.data())[1];
+            if (filecontents.size() >= 20 && (fcc == 0x30306372 || fcc == 0x6b646173)) {
+                dec(filecontents, path, fcc == 0x6b646173);
             } else {
                 enc(filecontents, path);
             }
