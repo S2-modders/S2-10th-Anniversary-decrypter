@@ -235,7 +235,7 @@ void enc(vector<byte>& filecontents, filesystem::path& path) {
     vector<byte> key = makeKey(filename, path.extension().string() != ".s2m" && path.extension().string() != ".sav", adk != string::npos);
 
     uint magic = 0x06091812;
-    uint fcc = adk ? 0x6b646173 : 0x30306372;
+    uint fcc = (adk != string::npos) ? 0x6b646173 : 0x30306372;
     uint filecrc = genCrc(filecontents.data(), filecontents.size());
     uint crc = genCrc(key.data(), key.size());
     uint size = filecontents.size();
