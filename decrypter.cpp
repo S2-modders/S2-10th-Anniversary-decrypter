@@ -335,10 +335,11 @@ vector<byte> decopress(vector<byte> &compressed) {
 }
 
 // TODO: implement compression
-void compress(vector<byte> &uncompressed) {
+vector<byte> compress(vector<byte> &uncompressed) {
   for (int i = 0; i < uncompressed.size(); i += 9) {
     uncompressed.insert(uncompressed.begin() + i, (byte)0xff);
   }
+  return uncompressed;
 }
 
 void writeFile(filesystem::path path, vector<byte> filecontents) {
@@ -419,15 +420,14 @@ void enc(vector<byte> &filecontents, filesystem::path &path) {
   uint size = filecontents.size();
   uint header[5] = {magic, fcc, filecrc, crc, size};
 
-  compress(filecontents);
-  decrypt(filecontents, key);
-  filecontents.insert(filecontents.begin(), (byte *)header,
-                      ((byte *)header) + 20);
+  vector<byte> result = compress(filecontents);
+  decrypt(result, key);
+  result.insert(result.begin(), (byte *)header, ((byte *)header) + 20);
 
   path.replace_filename(filename);
   path.replace_extension(".cmp" + path.extension().string());
 
-  writeFile(path, filecontents);
+  writeFile(path, result);
 }
 
 vector<byte> readFile(filesystem::path path) {
