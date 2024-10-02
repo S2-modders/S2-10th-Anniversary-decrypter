@@ -334,12 +334,308 @@ vector<byte> decopress(vector<byte> &compressed) {
   return decompressed;
 }
 
-// TODO: implement compression
-vector<byte> compress(vector<byte> &uncompressed) {
-  for (int i = 0; i < uncompressed.size(); i += 9) {
-    uncompressed.insert(uncompressed.begin() + i, (byte)0xff);
+uint dataBuffer1[1026];
+uint copyBufferInt2[1281];
+uint copyOffset;
+uint copyBufferInt[1025];
+byte copyBuffer[1024];
+byte idksometing[16];
+uint idx;
+uint cbiSum;
+uint copyLen;
+
+void update(uint copyLen)
+
+{
+  uint curr;
+  uint myCurr;
+  uint *tmp;
+  uint tmp2;
+  uint tmp3;
+
+  tmp = dataBuffer1 + copyLen;
+  if (dataBuffer1[copyLen] != 0x400) {
+    curr = copyBufferInt2[copyLen];
+    if (curr == 0x400) {
+      curr = copyBufferInt[copyLen];
+    } else {
+      myCurr = copyBufferInt[copyLen];
+      if (myCurr != 0x400) {
+        curr = myCurr;
+        if (copyBufferInt2[myCurr] != 0x400) {
+          do {
+            curr = copyBufferInt2[curr];
+          } while (copyBufferInt2[curr] != 0x400);
+          tmp2 = dataBuffer1[curr];
+          tmp3 = copyBufferInt[curr];
+          dataBuffer1[tmp3] = tmp2;
+          copyBufferInt2[tmp2] = tmp3;
+          copyBufferInt[curr] = myCurr;
+          dataBuffer1[copyBufferInt[copyLen]] = curr;
+        }
+        copyBufferInt2[curr] = copyBufferInt2[copyLen];
+        dataBuffer1[copyBufferInt2[copyLen]] = curr;
+      }
+    }
+    dataBuffer1[curr] = *tmp;
+    myCurr = *tmp;
+    if (copyBufferInt2[myCurr] == copyLen) {
+      *tmp = 0x400;
+      copyBufferInt2[myCurr] = curr;
+      return;
+    }
+    copyBufferInt[myCurr] = curr;
+    *tmp = 0x400;
   }
-  return uncompressed;
+  return;
+}
+
+void search(uint copybufferIdx)
+
+{
+  int diff;
+  uint currCopyOffest;
+  int currCopyLen;
+  uint currIdx;
+  int lastCopyLen;
+  byte curr;
+  uint *tmp;
+
+  curr = copyBuffer[copybufferIdx];
+  diff = 1;
+  copyBufferInt[copybufferIdx] = 0x400;
+  copyBufferInt2[copybufferIdx] = 0x400;
+  copyLen = 0;
+  currIdx = (uint)curr + 0x401;
+  lastCopyLen = 0;
+  do {
+    if (diff < 0) {
+      currCopyOffest = copyBufferInt[currIdx];
+      if (currCopyOffest == 0x400) {
+        copyBufferInt[currIdx] = copybufferIdx;
+        dataBuffer1[copybufferIdx] = currIdx;
+        return;
+      }
+    } else {
+      currCopyOffest = copyBufferInt2[currIdx];
+      if (currCopyOffest == 0x400) {
+        copyBufferInt2[currIdx] = copybufferIdx;
+        dataBuffer1[copybufferIdx] = currIdx;
+        return;
+      }
+    }
+    currCopyLen = 1;
+    do {
+      diff = (uint)copyBuffer[copybufferIdx + currCopyLen] -
+             (uint)copyBuffer[currCopyLen + currCopyOffest];
+      if (diff != 0)
+        break;
+      diff = (uint) * (byte *)(currCopyLen + copyBuffer + 1 + copybufferIdx) -
+             (uint) * (byte *)(currCopyLen + copyBuffer + 1 + currCopyOffest);
+      if (diff != 0) {
+        currCopyLen = currCopyLen + 1;
+        break;
+      }
+      diff = (uint) * (byte *)(currCopyLen + copyBuffer + 2 + copybufferIdx) -
+             (uint) * (byte *)(currCopyLen + copyBuffer + 2 + currCopyOffest);
+      if (diff != 0) {
+        currCopyLen = currCopyLen + 2;
+        break;
+      }
+      diff = (uint) * (byte *)(currCopyLen + copyBuffer + 3 + copybufferIdx) -
+             (uint) * (byte *)(currCopyLen + copyBuffer + 3 + currCopyOffest);
+      if (diff != 0) {
+        currCopyLen = currCopyLen + 3;
+        break;
+      }
+      diff = (uint) * (byte *)(currCopyLen + copyBuffer + 4 + copybufferIdx) -
+             (uint) * (byte *)(currCopyLen + copyBuffer + 4 + currCopyOffest);
+      if (diff != 0) {
+        currCopyLen = currCopyLen + 4;
+        break;
+      }
+      currCopyLen = currCopyLen + 5;
+    } while (currCopyLen < 0x10);
+    currIdx = currCopyOffest;
+    if ((lastCopyLen < currCopyLen) &&
+        (lastCopyLen = currCopyLen, copyLen = currCopyLen,
+         copyOffset = currCopyOffest, 0xf < currCopyLen)) {
+      dataBuffer1[copybufferIdx] = dataBuffer1[currCopyOffest];
+      tmp = dataBuffer1 + currCopyOffest;
+      copyBufferInt[copybufferIdx] = copyBufferInt[currCopyOffest];
+      copyBufferInt2[copybufferIdx] = copyBufferInt2[currCopyOffest];
+      dataBuffer1[copyBufferInt[currCopyOffest]] = copybufferIdx;
+      dataBuffer1[copyBufferInt2[currCopyOffest]] = copybufferIdx;
+      currIdx = *tmp;
+      if (copyBufferInt2[currIdx] != currCopyOffest) {
+        copyBufferInt[currIdx] = copybufferIdx;
+        *tmp = 0x400;
+        return;
+      }
+      copyBufferInt2[currIdx] = copybufferIdx;
+      *tmp = 0x400;
+      return;
+    }
+  } while (true);
+}
+
+vector<byte> compress(vector<byte> uncompressed)
+
+{
+  vector<byte> compressed;
+  uint SIZE = uncompressed.size();
+  uint DATA = 0;
+  int copyBufferIndex;
+  int i;
+  uint j;
+  uint *myCopyBuffer;
+  int k;
+  int l;
+  byte opCode;
+  uint j2;
+  int dataCopyIdx;
+  uint copyBufferIdx;
+  uint nextCopyLen;
+  byte dataCopyBuffer[20];
+  uint *myDataBuffer1;
+  uint currCopyLen;
+  byte currOpCode;
+  uint j3;
+  uint *myDataBuffer0;
+  void *start;
+  byte *tmp;
+
+  myDataBuffer0 = copyBufferInt2 + 0x401;
+  for (copyBufferIndex = 0x100; copyBufferIndex != 0;
+       copyBufferIndex = copyBufferIndex + -1) {
+    *myDataBuffer0 = 0x400;
+    myDataBuffer0 = myDataBuffer0 + 1;
+  }
+  myDataBuffer1 = dataBuffer1;
+  for (copyBufferIndex = 0x400; copyBufferIndex != 0;
+       copyBufferIndex = copyBufferIndex + -1) {
+    *myDataBuffer1 = 0x400;
+    myDataBuffer1 = myDataBuffer1 + 1;
+  }
+  j = 0;
+  dataCopyBuffer[0] = (byte)0;
+  opCode = (byte)1;
+  nextCopyLen = 0;
+  copyBufferIdx = 0x3f0;
+  myCopyBuffer = (uint *)copyBuffer;
+  for (i = 0xfc; i != 0; i = i + -1) {
+    *myCopyBuffer = 0x20202020;
+    myCopyBuffer = myCopyBuffer + 1;
+  }
+  do {
+    if (SIZE < 1)
+      break;
+    currOpCode = uncompressed.at(DATA);
+    SIZE = SIZE + -1;
+    DATA = DATA + 1;
+    copyBuffer[j + 0x3f0] = currOpCode;
+    j = j + 1;
+  } while ((int)j < 0x10);
+  idx = j;
+  j2 = j;
+  if (j != 0) {
+    copyBufferIndex = 0x3ef;
+    do {
+      search(copyBufferIndex);
+      copyBufferIndex = copyBufferIndex + -1;
+    } while (0x3df < copyBufferIndex);
+    search(0x3f0);
+    dataCopyIdx = 1;
+    do {
+      if ((int)j < (int)copyLen) {
+        copyLen = j;
+      }
+      if ((int)copyLen < 3) {
+        dataCopyBuffer[0] = dataCopyBuffer[0] | opCode;
+        copyLen = 1;
+        dataCopyBuffer[dataCopyIdx] = copyBuffer[copyBufferIdx];
+        copyBufferIndex = dataCopyIdx;
+      } else {
+        dataCopyBuffer[dataCopyIdx] = (byte)copyOffset;
+        copyBufferIndex = dataCopyIdx + 1;
+        dataCopyBuffer[dataCopyIdx + 1] =
+            (byte)(copyOffset >> 4 & 0xf0 | copyLen - 3);
+      }
+      dataCopyIdx = copyBufferIndex + 1;
+      currOpCode = opCode & (byte)0x7f;
+      opCode = opCode << 1;
+      if (currOpCode == (byte)0) {
+        copyBufferIndex = 0;
+        if (0 < dataCopyIdx) {
+          do {
+            opCode = dataCopyBuffer[copyBufferIndex];
+            compressed.push_back(opCode);
+            copyBufferIndex = copyBufferIndex + 1;
+            j = j2;
+          } while (copyBufferIndex < dataCopyIdx);
+        }
+        cbiSum = cbiSum + dataCopyIdx;
+        dataCopyBuffer[0] = (byte)0;
+        opCode = (byte)1;
+        dataCopyIdx = 1;
+      }
+      currCopyLen = copyLen;
+      k = 0;
+      j3 = j2;
+      if (0 < (int)copyLen) {
+        do {
+          if (SIZE < 1) {
+            j3 = j2;
+            if (k < (int)currCopyLen) {
+              copyBufferIndex = currCopyLen - k;
+              do {
+                currCopyLen = nextCopyLen;
+                update(nextCopyLen);
+                nextCopyLen = currCopyLen + 1 & 0x3ff;
+                copyBufferIdx = copyBufferIdx + 1 & 0x3ff;
+                j = j - 1;
+                if (j != 0) {
+                  search(copyBufferIdx);
+                }
+                copyBufferIndex = copyBufferIndex + -1;
+                j3 = j;
+              } while (copyBufferIndex != 0);
+            }
+            break;
+          }
+          SIZE = SIZE + -1;
+          currOpCode = uncompressed.at(DATA);
+          DATA = DATA + 1;
+          j = j2;
+          update(nextCopyLen);
+          copyBuffer[nextCopyLen] = currOpCode;
+          if ((int)nextCopyLen < 0xf) {
+            idksometing[nextCopyLen] = currOpCode;
+          }
+          nextCopyLen = nextCopyLen + 1 & 0x3ff;
+          copyBufferIdx = copyBufferIdx + 1 & 0x3ff;
+          search(copyBufferIdx);
+          k = k + 1;
+          j = j2;
+          j3 = j2;
+        } while (k < (int)currCopyLen);
+      }
+      j2 = j3;
+      copyBufferIndex = dataCopyIdx;
+    } while (0 < (int)j);
+    if (1 < dataCopyIdx) {
+      l = 0;
+      if (0 < dataCopyIdx) {
+        do {
+          opCode = dataCopyBuffer[l];
+          compressed.push_back(opCode);
+          l = l + 1;
+        } while (l < copyBufferIndex);
+      }
+      cbiSum = cbiSum + copyBufferIndex;
+    }
+  }
+  return compressed;
 }
 
 void writeFile(filesystem::path path, vector<byte> filecontents) {
