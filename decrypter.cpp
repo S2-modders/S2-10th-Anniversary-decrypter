@@ -200,13 +200,13 @@ uint32_t genCrc(uint8_t *data, size_t length) {
           rnum2[div >> 8 & 0xff] ^ rnum3[div & 0xff];
   }
   for (; i + 4 < length; i += 4) {
-    div ^= (intData)[i / 4];
+    div ^= intData[i / 4];
     div = rnum0[div >> 0x18] ^ rnum1[div >> 0x10 & 0xff] ^
           rnum2[div >> 8 & 0xff] ^ rnum3[div & 0xff];
   }
 
   for (; i < length; i++) {
-    div = (div >> 8) ^ rnum0[(uint32_t)(data[i] ^ (uint8_t)div)];
+    div = (div >> 8) ^ rnum0[data[i] ^ (uint8_t)div];
   }
 
   return ~div;
@@ -252,11 +252,9 @@ struct Random {
     return seed;
   }
 
-  uint8_t nextuint8_t() { return (uint8_t)nextInt(); }
-
   void fill(uint8_t *arr, size_t length) {
     for (int i = 0; i < length; i++) {
-      arr[i] = nextuint8_t();
+      arr[i] = nextInt();
     }
   }
 };
@@ -276,7 +274,7 @@ vector<uint8_t> makeKey(string &filename, bool randomize, bool adk) {
   Random random(
       genCrc((uint8_t *)lowercaseFilename.data(), lowercaseFilename.size()));
   for (uint32_t i = 0; i < 16; i++) {
-    key[i] ^= random.nextuint8_t();
+    key[i] ^= random.nextInt();
   }
   return key;
 }
@@ -296,7 +294,7 @@ void decrypt(vector<uint8_t> &data, vector<uint8_t> &key) {
   uint32_t i = random.nextInt() % data.size();
   uint32_t offset = (random.nextInt() & 0x1fff) + 0x2000;
   for (; i < data.size(); i += offset) {
-    data[i] ^= rA2[((uint32_t)key[i % key.size()] ^ i) % length];
+    data[i] ^= rA2[(key[i % key.size()] ^ i) % length];
   }
 }
 
@@ -312,15 +310,15 @@ vector<uint8_t> decopress(vector<uint8_t> &compressed) {
   for (uint8_t curr : compressed) {
     if (copy) {
       copy = false;
-      uint32_t num = (uint32_t)uint8_t1 | ((uint32_t)curr & 0xf0) << 4;
-      for (int j = 0; j < ((uint32_t)curr & 0xf) + 3; j++) {
+      uint32_t num = uint8_t1 | (curr & 0xf0) << 4;
+      for (int j = 0; j < (curr & 0xf) + 3; j++) {
         uint8_t copied = copyBuffer[(j + num) & 0x3ff];
         decompressed.push_back(copied);
         copyBuffer[copyBufferIdx++] = copied;
         copyBufferIdx &= 0x3ff;
       }
     } else if ((mode & 0x100) == 0) {
-      mode = (uint32_t)curr | 0xff00;
+      mode = curr | 0xff00;
     } else {
       if ((mode & 1) == 1) {
         decompressed.push_back(curr);
@@ -409,7 +407,7 @@ void search(uint32_t copybufferIdx)
   copyBufferInt[copybufferIdx] = 0x400;
   copyBufferInt2[copybufferIdx] = 0x400;
   copyLen = 0;
-  currIdx = (uint32_t)curr + 0x401;
+  currIdx = curr + 0x401;
   lastCopyLen = 0;
   do {
     if (diff < 0) {
@@ -429,8 +427,8 @@ void search(uint32_t copybufferIdx)
     }
     currCopyLen = 1;
     do {
-      diff = (uint32_t)copyBuffer[copybufferIdx + currCopyLen] -
-             (uint32_t)copyBuffer[currCopyLen + currCopyOffest];
+      diff = copyBuffer[copybufferIdx + currCopyLen] -
+             copyBuffer[currCopyLen + currCopyOffest];
       if (diff != 0)
         break;
       diff = (uint32_t) *
