@@ -663,9 +663,14 @@ int main(int argc, char *argv[]) {
             filesystem::path currPath = entry.path();
             vector<uint8_t> filecontents = readFile(currPath);
             uint32_t fcc = ((uint32_t *)filecontents.data())[1];
+            if (filecontents.size() < 20 ||
+                !(fcc == 0x30306372 || fcc == 0x6b646173))
+              continue;
             size_t cmpSize = filecontents.size();
             filecontents = dec(filecontents, currPath,
                                fcc == 0x6b646173 ? ADK : DNG, false);
+            if (filecontents.size() == 0)
+              continue;
             filecontents = enc(filecontents, currPath, false);
             if (cmpSize > filecontents.size()) {
               cout << "saved " << cmpSize - filecontents.size()
@@ -683,9 +688,13 @@ int main(int argc, char *argv[]) {
       }
       vector<uint8_t> filecontents = readFile(path);
       uint32_t fcc = ((uint32_t *)filecontents.data())[1];
+      if (filecontents.size() < 20 || !(fcc == 0x30306372 || fcc == 0x6b646173))
+        continue;
       size_t cmpSize = filecontents.size();
       filecontents =
           dec(filecontents, path, fcc == 0x6b646173 ? ADK : DNG, false);
+      if (filecontents.size() == 0)
+        continue;
       filecontents = enc(filecontents, path, false);
       if (cmpSize > filecontents.size()) {
         cout << "saved " << cmpSize - filecontents.size() << " uint8_ts in "
