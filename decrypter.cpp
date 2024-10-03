@@ -254,12 +254,10 @@ struct Random {
 
   byte nextByte() { return (byte)nextInt(); }
 
-  vector<byte> makeByteArray(size_t length) {
-    vector<byte> array(length);
+  void fill(byte *arr, size_t length) {
     for (int i = 0; i < length; i++) {
-      array[i] = nextByte();
+      arr[i] = nextByte();
     }
-    return array;
   }
 };
 
@@ -285,16 +283,20 @@ vector<byte> makeKey(string &filename, bool randomize, bool adk) {
 
 void decrypt(vector<byte> &data, vector<byte> &key) {
   Random random(genCrc(key.data(), key.size()));
-  vector<byte> rA1 = random.makeByteArray((random.nextInt() & 0x7f) + 0x80);
+  uint length = (random.nextInt() & 0x7f) + 0x80;
+  byte rA1[0x80 + 0x7f];
+  random.fill(rA1, length);
   for (uint i = 0; i < data.size(); i++) {
-    data[i] ^= rA1[i % rA1.size()];
+    data[i] ^= rA1[i % length];
   }
 
-  vector<byte> rA2 = random.makeByteArray((random.nextInt() & 0xf) + 0x11);
+  length = (random.nextInt() & 0xf) + 0x11;
+  byte rA2[0x11 + 0xf];
+  random.fill(rA2, length);
   uint i = random.nextInt() % data.size();
   uint offset = (random.nextInt() & 0x1fff) + 0x2000;
   for (; i < data.size(); i += offset) {
-    data[i] ^= rA2[((uint)key[i % key.size()] ^ i) % rA2.size()];
+    data[i] ^= rA2[((uint)key[i % key.size()] ^ i) % length];
   }
 }
 
