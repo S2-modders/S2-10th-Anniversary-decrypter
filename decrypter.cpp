@@ -261,11 +261,62 @@ struct Random {
   }
 };
 
-vector<uint8_t> makeKey(string &filename, bool randomize, Game game) {
-  uint32_t keyIntAdK[4] = {0xbdc28cbd, 0xf84b6730, 0xf91b9bb4, 0xf42e82f6};
-  uint32_t keyInt[4] = {0xca4659c9, 0xa4ff0d9, 0xb8aa00a1, 0x6bdbe8cb};
-  vector<uint8_t> key((uint8_t *)(game == ADK ? keyIntAdK : keyInt),
-                      ((uint8_t *)(game == ADK ? keyIntAdK : keyInt) + 16));
+void initKey(uint8_t(key)[16], Game game) {
+  switch (game) {
+  case ADK:
+    key[0] = 0xbd;
+    key[1] = 0x8c;
+    key[2] = 0xc2;
+    key[3] = 0xbd;
+
+    key[4] = 0x30;
+    key[5] = 0x67;
+    key[6] = 0x4b;
+    key[7] = 0xf8;
+
+    key[8] = 0xb4;
+    key[9] = 0x9b;
+    key[10] = 0x1b;
+    key[11] = 0xf9;
+
+    key[12] = 0xf6;
+    key[13] = 0x82;
+    key[14] = 0x2e;
+    key[15] = 0xf4;
+    break;
+  case DNG:
+    key[0] = 0xc9;
+    key[1] = 0x59;
+    key[2] = 0x46;
+    key[3] = 0xca;
+
+    key[4] = 0xd9;
+    key[5] = 0xf0;
+    key[6] = 0x4f;
+    key[7] = 0x0a;
+
+    key[8] = 0xa1;
+    key[9] = 0x00;
+    key[10] = 0xaa;
+    key[11] = 0xb8;
+
+    key[12] = 0xcb;
+    key[13] = 0xe8;
+    key[14] = 0xdb;
+    key[15] = 0x6b;
+  }
+}
+
+void randomizeKey(uint8_t(key)[16], uint8_t *filenameLowerCase, size_t length) {
+  Random random(genCrc(filenameLowerCase, length));
+  for (uint32_t i = 0; i < 16; i++) {
+    key[i] ^= random.nextInt();
+  }
+}
+
+uint8_t *makeKey(uint8_t(key)[16], string &filename, bool randomize,
+                 Game game) {
+  initKey(key, game);
   if (!randomize)
     return key;
   string lowercaseFilename;
@@ -273,16 +324,13 @@ vector<uint8_t> makeKey(string &filename, bool randomize, Game game) {
   transform(filename.begin(), filename.end(), lowercaseFilename.begin(),
             [](char c) { return tolower(c); });
 
-  Random random(
-      genCrc((uint8_t *)lowercaseFilename.data(), lowercaseFilename.size()));
-  for (uint32_t i = 0; i < 16; i++) {
-    key[i] ^= random.nextInt();
-  }
+  randomizeKey(key, (uint8_t *)lowercaseFilename.data(),
+               lowercaseFilename.size());
   return key;
 }
 
-void decrypt(vector<uint8_t> &data, vector<uint8_t> &key) {
-  Random random(genCrc(key.data(), key.size()));
+void decrypt(vector<uint8_t> &data, uint8_t *key) {
+  Random random(genCrc(key, 16));
   uint32_t length = (random.nextInt() & 0x7f) + 0x80;
   uint8_t rA1[0x80 + 0x7f];
   random.fill(rA1, length);
@@ -296,7 +344,7 @@ void decrypt(vector<uint8_t> &data, vector<uint8_t> &key) {
   uint32_t i = random.nextInt() % data.size();
   uint32_t offset = (random.nextInt() & 0x1fff) + 0x2000;
   for (; i < data.size(); i += offset) {
-    data[i] ^= rA2[(key[i % key.size()] ^ i) % length];
+    data[i] ^= rA2[(key[i % 16] ^ i) % length];
   }
 }
 
@@ -674,11 +722,11 @@ vector<uint8_t> dec(vector<uint8_t> &filecontents, filesystem::path &path,
   size_t cmp = filename.find(".cmp");
   filename = cmp == string::npos ? filename : filename.erase(cmp, 4);
 
-  vector<uint8_t> key = makeKey(filename,
-                                path.extension().string() != ".s2m" &&
-                                    path.extension().string() != ".sav",
-                                game);
-  uint32_t crc = genCrc(key.data(), key.size());
+  uint8_t *key = makeKey(filename,
+                         path.extension().string() != ".s2m" &&
+                             path.extension().string() != ".sav",
+                         game);
+  uint32_t crc = genCrc(key, 16);
   uint32_t expectedCrc = ((uint32_t *)filecontents.data())[3];
   if (crc != expectedCrc) {
     cerr << hex << "filename crc (" << crc << ") missmatch for file " << path
@@ -727,15 +775,16 @@ vector<uint8_t> enc(vector<uint8_t> &filecontents, filesystem::path &path,
     cerr << "can't determine filetype for " << path << endl;
     return {};
   }
-  vector<uint8_t> key = makeKey(filename,
-                                path.extension().string() != ".s2m" &&
-                                    path.extension().string() != ".sav",
-                                adk != string::npos ? ADK : DNG);
+  uint8_t key[16];
+  makeKey(key, filename,
+          path.extension().string() != ".s2m" &&
+              path.extension().string() != ".sav",
+          adk != string::npos ? ADK : DNG);
 
   uint32_t magic = 0x06091812;
   uint32_t fcc = (adk != string::npos) ? 0x6b646173 : 0x30306372;
   uint32_t filecrc = genCrc(filecontents.data(), filecontents.size());
-  uint32_t crc = genCrc(key.data(), key.size());
+  uint32_t crc = genCrc(key, 16);
   uint32_t size = filecontents.size();
   uint32_t header[5] = {magic, fcc, filecrc, crc, size};
 
