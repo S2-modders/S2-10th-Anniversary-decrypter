@@ -688,16 +688,16 @@ vector<uint8_t> dec(vector<uint8_t> &filecontents, filesystem::path &path,
 
   vector<uint8_t> data(filecontents.begin() + 20, filecontents.end());
   decrypt(data, key);
-  uint32_t expcetedSize = ((uint32_t *)filecontents.data())[4];
-  uint8_t *result = new uint8_t[expcetedSize];
-  bool success = decopress(data, result, expcetedSize);
+  uint32_t expectedSize = ((uint32_t *)filecontents.data())[4];
+  uint8_t *result = new uint8_t[expectedSize];
+  bool success = decopress(data, result, expectedSize);
 
   if (!success) {
     cerr << dec << "file size missmatch for file " << path << endl;
     return {};
   }
 
-  crc = genCrc(result, expcetedSize);
+  crc = genCrc(result, expectedSize);
   expectedCrc = ((uint32_t *)filecontents.data())[2];
   if (crc != expectedCrc) {
     cerr << hex << "filedata crc (" << crc << ") missmatch for file " << path
@@ -708,7 +708,7 @@ vector<uint8_t> dec(vector<uint8_t> &filecontents, filesystem::path &path,
   path.replace_extension((game == ADK ? ".adk" : ".dng") +
                          path.extension().string());
 
-  vector<uint8_t> vecRes(result, result + expcetedSize);
+  vector<uint8_t> vecRes(result, result + expectedSize);
   if (write) {
     writeFile(path, vecRes);
   }
