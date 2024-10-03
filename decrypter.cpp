@@ -357,22 +357,10 @@ bool decopress(vector<uint8_t> &compressed, uint8_t *decompressed,
   uint8_t copyBuffer[0x400];
   fill(begin(copyBuffer), end(copyBuffer), (uint8_t)0x20);
   uint32_t copyBufferIdx = 0x3f0;
-  bool copy = false;
-  uint8_t byte1;
   uint32_t mode = 0;
-  for (uint8_t curr : compressed) {
-    if (copy) {
-      copy = false;
-      uint32_t num = byte1 | (curr & 0xf0) << 4;
-      for (int j = 0; j < (curr & 0xf) + 3; j++) {
-        uint8_t copied = copyBuffer[(j + num) & 0x3ff];
-        if (idx == size)
-          return false;
-        decompressed[idx++] = copied;
-        copyBuffer[copyBufferIdx++] = copied;
-        copyBufferIdx &= 0x3ff;
-      }
-    } else if ((mode & 0x100) == 0) {
+  for (uint32_t i = 0; i < compressed.size(); i++) {
+    uint8_t curr = compressed[i];
+    if ((mode & 0x100) == 0) {
       mode = curr | 0xff00;
     } else {
       if ((mode & 1) == 1) {
@@ -381,9 +369,16 @@ bool decopress(vector<uint8_t> &compressed, uint8_t *decompressed,
         decompressed[idx++] = curr;
         copyBuffer[copyBufferIdx++] = curr;
         copyBufferIdx &= 0x3ff;
-      } else {
-        copy = true;
-        byte1 = curr;
+      } else if (++i < compressed.size()) {
+        uint32_t num = curr | (compressed[i] & 0xf0) << 4;
+        for (int j = 0; j < (compressed[i] & 0xf) + 3; j++) {
+          uint8_t copied = copyBuffer[(j + num) & 0x3ff];
+          if (idx == size)
+            return false;
+          decompressed[idx++] = copied;
+          copyBuffer[copyBufferIdx++] = copied;
+          copyBufferIdx &= 0x3ff;
+        }
       }
       mode >>= 1;
     }
