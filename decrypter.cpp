@@ -332,21 +332,21 @@ void makeKey(uint8_t (&key)[16], string &filename, bool randomize, Game game) {
                lowercaseFilename.size());
 }
 
-void decrypt(vector<uint8_t> &data, uint8_t (&key)[16]) {
+void decrypt(uint8_t (&key)[16], uint8_t *data, size_t size) {
   Random random(genCrc(key, sizeof(key)));
   uint32_t length = (random.nextInt() & 0x7f) + 0x80;
   uint8_t rA1[0x80 + 0x7f];
   random.fill(rA1, length);
-  for (uint32_t i = 0; i < data.size(); i++) {
+  for (uint32_t i = 0; i < size; i++) {
     data[i] ^= rA1[i % length];
   }
 
   length = (random.nextInt() & 0xf) + 0x11;
   uint8_t rA2[0x11 + 0xf];
   random.fill(rA2, length);
-  uint32_t i = random.nextInt() % data.size();
+  uint32_t i = random.nextInt() % size;
   uint32_t offset = (random.nextInt() & 0x1fff) + 0x2000;
-  for (; i < data.size(); i += offset) {
+  for (; i < size; i += offset) {
     data[i] ^= rA2[(key[i % sizeof(key)] ^ i) % length];
   }
 }
@@ -548,7 +548,7 @@ void search(uint32_t copybufferIdx)
 size_t compress(vector<uint8_t> uncompressed, uint8_t *compressed)
 
 {
-  size_t idx = 0;
+  size_t myIdx = 0;
   uint32_t SIZE = uncompressed.size();
   uint32_t DATA = 0;
   int copyBufferIndex;
@@ -635,7 +635,7 @@ size_t compress(vector<uint8_t> uncompressed, uint8_t *compressed)
         if (0 < dataCopyIdx) {
           do {
             opCode = dataCopyBuffer[copyBufferIndex];
-            compressed[idx++] = opCode;
+            compressed[myIdx++] = opCode;
             copyBufferIndex = copyBufferIndex + 1;
             j = j2;
           } while (copyBufferIndex < dataCopyIdx);
@@ -694,14 +694,14 @@ size_t compress(vector<uint8_t> uncompressed, uint8_t *compressed)
       if (0 < dataCopyIdx) {
         do {
           opCode = dataCopyBuffer[l];
-          compressed[idx++] = opCode;
+          compressed[myIdx++] = opCode;
           l = l + 1;
         } while (l < copyBufferIndex);
       }
       cbiSum = cbiSum + copyBufferIndex;
     }
   }
-  return idx;
+  return myIdx;
 }
 
 void writeFile(filesystem::path path, vector<uint8_t> filecontents) {
@@ -739,7 +739,7 @@ vector<uint8_t> dec(vector<uint8_t> &filecontents, filesystem::path &path,
   }
 
   vector<uint8_t> data(filecontents.begin() + 20, filecontents.end());
-  decrypt(data, key);
+  decrypt(key, data.data(), data.size());
   uint32_t expectedSize = ((uint32_t *)filecontents.data())[4];
   uint8_t *result = new uint8_t[expectedSize];
   bool success = decopress(data, result, expectedSize);
@@ -793,8 +793,7 @@ vector<uint8_t> enc(vector<uint8_t> &filecontents, filesystem::path &path,
 
   uint8_t *result = new uint8_t[20 + (filecontents.size() + 7) / 8 * 9];
   size_t mySize = compress(filecontents, result + 20);
-  vector<uint8_t> vecRes = std::vector(result + 20, result + mySize);
-  decrypt(vecRes, key);
+  decrypt(key, result + 20, mySize);
   ((uint32_t *)result)[0] = magic;
   ((uint32_t *)result)[1] = fcc;
   ((uint32_t *)result)[2] = filecrc;
@@ -804,6 +803,7 @@ vector<uint8_t> enc(vector<uint8_t> &filecontents, filesystem::path &path,
   path.replace_filename(filename);
   path.replace_extension(".cmp" + path.extension().string());
 
+  vector<uint8_t> vecRes = std::vector(result, result + mySize + 20);
   if (write) {
     writeFile(path, vecRes);
   }
