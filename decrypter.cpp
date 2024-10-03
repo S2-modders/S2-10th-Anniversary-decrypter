@@ -358,12 +358,12 @@ bool decopress(vector<uint8_t> &compressed, uint8_t *decompressed,
   fill(begin(copyBuffer), end(copyBuffer), (uint8_t)0x20);
   uint32_t copyBufferIdx = 0x3f0;
   bool copy = false;
-  uint8_t uint8_t1;
+  uint8_t byte1;
   uint32_t mode = 0;
   for (uint8_t curr : compressed) {
     if (copy) {
       copy = false;
-      uint32_t num = uint8_t1 | (curr & 0xf0) << 4;
+      uint32_t num = byte1 | (curr & 0xf0) << 4;
       for (int j = 0; j < (curr & 0xf) + 3; j++) {
         uint8_t copied = copyBuffer[(j + num) & 0x3ff];
         if (idx == size)
@@ -383,7 +383,7 @@ bool decopress(vector<uint8_t> &compressed, uint8_t *decompressed,
         copyBufferIdx &= 0x3ff;
       } else {
         copy = true;
-        uint8_t1 = curr;
+        byte1 = curr;
       }
       mode >>= 1;
     }
@@ -392,314 +392,170 @@ bool decopress(vector<uint8_t> &compressed, uint8_t *decompressed,
 }
 
 // TODO: there is some undef behavior, which prevents code optimization
-uint32_t dataBuffer1[1026];
-uint32_t copyBufferInt2[1281];
-uint32_t copyOffset;
-uint32_t copyBufferInt[1025];
+uint32_t dataBuffer[1026];
+uint32_t cbi0[1281];
+uint32_t cbi1[1025];
 uint8_t copyBuffer[1024];
-uint8_t idksometing[16];
-uint32_t idx;
-uint32_t cbiSum;
 uint32_t copyLen;
+uint32_t copyOffset;
 
-void update(uint32_t copyLen)
-
-{
-  uint32_t curr;
-  uint32_t myCurr;
-  uint32_t *tmp;
-  uint32_t tmp2;
-  uint32_t tmp3;
-
-  tmp = dataBuffer1 + copyLen;
-  if (dataBuffer1[copyLen] != 0x400) {
-    curr = copyBufferInt2[copyLen];
-    if (curr == 0x400) {
-      curr = copyBufferInt[copyLen];
-    } else {
-      myCurr = copyBufferInt[copyLen];
-      if (myCurr != 0x400) {
-        curr = myCurr;
-        if (copyBufferInt2[myCurr] != 0x400) {
-          do {
-            curr = copyBufferInt2[curr];
-          } while (copyBufferInt2[curr] != 0x400);
-          tmp2 = dataBuffer1[curr];
-          tmp3 = copyBufferInt[curr];
-          dataBuffer1[tmp3] = tmp2;
-          copyBufferInt2[tmp2] = tmp3;
-          copyBufferInt[curr] = myCurr;
-          dataBuffer1[copyBufferInt[copyLen]] = curr;
-        }
-        copyBufferInt2[curr] = copyBufferInt2[copyLen];
-        dataBuffer1[copyBufferInt2[copyLen]] = curr;
-      }
+void update(uint32_t copyLen) {
+  if (dataBuffer[copyLen] == 0x400)
+    return;
+  uint32_t curr = cbi0[copyLen];
+  if (curr == 0x400) {
+    curr = cbi1[copyLen];
+  } else if (cbi1[copyLen] != 0x400) {
+    curr = cbi1[copyLen];
+    if (cbi0[curr] != 0x400) {
+      do {
+        curr = cbi0[curr];
+      } while (cbi0[curr] != 0x400);
+      uint32_t tmp2 = dataBuffer[curr];
+      uint32_t tmp3 = cbi1[curr];
+      dataBuffer[tmp3] = tmp2;
+      cbi0[tmp2] = tmp3;
+      cbi1[curr] = curr;
+      dataBuffer[cbi1[copyLen]] = curr;
     }
-    dataBuffer1[curr] = *tmp;
-    myCurr = *tmp;
-    if (copyBufferInt2[myCurr] == copyLen) {
-      *tmp = 0x400;
-      copyBufferInt2[myCurr] = curr;
-      return;
-    }
-    copyBufferInt[myCurr] = curr;
-    *tmp = 0x400;
+    cbi0[curr] = cbi0[copyLen];
+    dataBuffer[cbi0[copyLen]] = curr;
   }
+
+  dataBuffer[curr] = dataBuffer[copyLen];
+  uint32_t myCurr = dataBuffer[copyLen];
+  if (cbi0[myCurr] == copyLen) {
+    dataBuffer[copyLen] = 0x400;
+    cbi0[myCurr] = curr;
+    return;
+  }
+  cbi1[myCurr] = curr;
+  dataBuffer[copyLen] = 0x400;
   return;
 }
 
-void search(uint32_t copybufferIdx)
-
-{
-  int diff;
-  uint32_t currCopyOffest;
-  int currCopyLen;
-  uint32_t currIdx;
-  int lastCopyLen;
-  uint8_t curr;
-  uint32_t *tmp;
-
-  curr = copyBuffer[copybufferIdx];
-  diff = 1;
-  copyBufferInt[copybufferIdx] = 0x400;
-  copyBufferInt2[copybufferIdx] = 0x400;
+void search(uint32_t copybufferIdx) {
+  uint8_t curr = copyBuffer[copybufferIdx];
+  int diff = 1;
+  cbi1[copybufferIdx] = 0x400;
+  cbi0[copybufferIdx] = 0x400;
   copyLen = 0;
-  currIdx = curr + 0x401;
-  lastCopyLen = 0;
+  uint32_t currIdx = curr + 0x401;
+  uint32_t lastCopyLen = 0;
   do {
+    uint32_t currCopyOffest;
     if (diff < 0) {
-      currCopyOffest = copyBufferInt[currIdx];
+      currCopyOffest = cbi1[currIdx];
       if (currCopyOffest == 0x400) {
-        copyBufferInt[currIdx] = copybufferIdx;
-        dataBuffer1[copybufferIdx] = currIdx;
+        cbi1[currIdx] = copybufferIdx;
+        dataBuffer[copybufferIdx] = currIdx;
         return;
       }
     } else {
-      currCopyOffest = copyBufferInt2[currIdx];
+      currCopyOffest = cbi0[currIdx];
       if (currCopyOffest == 0x400) {
-        copyBufferInt2[currIdx] = copybufferIdx;
-        dataBuffer1[copybufferIdx] = currIdx;
+        cbi0[currIdx] = copybufferIdx;
+        dataBuffer[copybufferIdx] = currIdx;
         return;
       }
     }
-    currCopyLen = 1;
-    do {
+
+    uint currCopyLen = 1;
+    for (; currCopyLen < 16; currCopyLen++) {
       diff = copyBuffer[copybufferIdx + currCopyLen] -
              copyBuffer[currCopyLen + currCopyOffest];
       if (diff != 0)
         break;
-      diff = (uint32_t) *
-                 (uint8_t *)(currCopyLen + copyBuffer + 1 + copybufferIdx) -
-             (uint32_t) *
-                 (uint8_t *)(currCopyLen + copyBuffer + 1 + currCopyOffest);
-      if (diff != 0) {
-        currCopyLen = currCopyLen + 1;
-        break;
-      }
-      diff = (uint32_t) *
-                 (uint8_t *)(currCopyLen + copyBuffer + 2 + copybufferIdx) -
-             (uint32_t) *
-                 (uint8_t *)(currCopyLen + copyBuffer + 2 + currCopyOffest);
-      if (diff != 0) {
-        currCopyLen = currCopyLen + 2;
-        break;
-      }
-      diff = (uint32_t) *
-                 (uint8_t *)(currCopyLen + copyBuffer + 3 + copybufferIdx) -
-             (uint32_t) *
-                 (uint8_t *)(currCopyLen + copyBuffer + 3 + currCopyOffest);
-      if (diff != 0) {
-        currCopyLen = currCopyLen + 3;
-        break;
-      }
-      diff = (uint32_t) *
-                 (uint8_t *)(currCopyLen + copyBuffer + 4 + copybufferIdx) -
-             (uint32_t) *
-                 (uint8_t *)(currCopyLen + copyBuffer + 4 + currCopyOffest);
-      if (diff != 0) {
-        currCopyLen = currCopyLen + 4;
-        break;
-      }
-      currCopyLen = currCopyLen + 5;
-    } while (currCopyLen < 0x10);
+    }
+
     currIdx = currCopyOffest;
     if ((lastCopyLen < currCopyLen) &&
         (lastCopyLen = currCopyLen, copyLen = currCopyLen,
          copyOffset = currCopyOffest, 0xf < currCopyLen)) {
-      dataBuffer1[copybufferIdx] = dataBuffer1[currCopyOffest];
-      tmp = dataBuffer1 + currCopyOffest;
-      copyBufferInt[copybufferIdx] = copyBufferInt[currCopyOffest];
-      copyBufferInt2[copybufferIdx] = copyBufferInt2[currCopyOffest];
-      dataBuffer1[copyBufferInt[currCopyOffest]] = copybufferIdx;
-      dataBuffer1[copyBufferInt2[currCopyOffest]] = copybufferIdx;
-      currIdx = *tmp;
-      if (copyBufferInt2[currIdx] != currCopyOffest) {
-        copyBufferInt[currIdx] = copybufferIdx;
-        *tmp = 0x400;
+      dataBuffer[copybufferIdx] = dataBuffer[currCopyOffest];
+      cbi1[copybufferIdx] = cbi1[currCopyOffest];
+      cbi0[copybufferIdx] = cbi0[currCopyOffest];
+      dataBuffer[cbi1[currCopyOffest]] = copybufferIdx;
+      dataBuffer[cbi0[currCopyOffest]] = copybufferIdx;
+      currIdx = dataBuffer[currCopyOffest];
+      if (cbi0[currIdx] != currCopyOffest) {
+        cbi1[currIdx] = copybufferIdx;
+        dataBuffer[currCopyOffest] = 0x400;
         return;
       }
-      copyBufferInt2[currIdx] = copybufferIdx;
-      *tmp = 0x400;
+      cbi0[currIdx] = copybufferIdx;
+      dataBuffer[currCopyOffest] = 0x400;
       return;
     }
   } while (true);
 }
 
-size_t compress(vector<uint8_t> uncompressed, uint8_t *compressed)
-
-{
+size_t compress(vector<uint8_t> uncompressed, uint8_t *compressed) {
   size_t myIdx = 0;
-  uint32_t SIZE = uncompressed.size();
-  uint32_t DATA = 0;
-  int copyBufferIndex;
-  int i;
-  uint32_t j;
-  uint32_t *myCopyBuffer;
-  int k;
-  int l;
-  uint8_t opCode;
-  uint32_t j2;
-  int dataCopyIdx;
-  uint32_t copyBufferIdx;
-  uint32_t nextCopyLen;
+  uint32_t idx = 0;
   uint8_t dataCopyBuffer[20];
-  uint32_t *myDataBuffer1;
-  uint32_t currCopyLen;
-  uint8_t currOpCode;
-  uint32_t j3;
-  uint32_t *myDataBuffer0;
-  void *start;
-  uint8_t *tmp;
 
-  myDataBuffer0 = copyBufferInt2 + 0x401;
-  for (copyBufferIndex = 0x100; copyBufferIndex != 0;
-       copyBufferIndex = copyBufferIndex + -1) {
-    *myDataBuffer0 = 0x400;
-    myDataBuffer0 = myDataBuffer0 + 1;
+  fill(begin(cbi0) + 0x401, end(cbi0), 0x400);
+  fill(begin(dataBuffer), end(dataBuffer), 0x40);
+
+  uint32_t j = 0;
+  dataCopyBuffer[0] = 0;
+  uint8_t opCode = 1;
+  uint32_t nextCopyLen = 0;
+  uint32_t copyBufferIdx = 0x3f0;
+  fill(begin(copyBuffer), end(copyBuffer), 0x20);
+  for (j = 0; j < 16 && uncompressed.size() < idx; j++) {
+    copyBuffer[j + 0x3f0] = uncompressed.at(idx++);
   }
-  myDataBuffer1 = dataBuffer1;
-  for (copyBufferIndex = 0x400; copyBufferIndex != 0;
-       copyBufferIndex = copyBufferIndex + -1) {
-    *myDataBuffer1 = 0x400;
-    myDataBuffer1 = myDataBuffer1 + 1;
+  for (uint32_t i = 0; i <= 0x3f0; i++) {
+    search(i);
   }
-  j = 0;
-  dataCopyBuffer[0] = (uint8_t)0;
-  opCode = (uint8_t)1;
-  nextCopyLen = 0;
-  copyBufferIdx = 0x3f0;
-  myCopyBuffer = (uint32_t *)copyBuffer;
-  for (i = 0xfc; i != 0; i = i + -1) {
-    *myCopyBuffer = 0x20202020;
-    myCopyBuffer = myCopyBuffer + 1;
-  }
-  do {
-    if (SIZE < 1)
-      break;
-    currOpCode = uncompressed.at(DATA);
-    SIZE = SIZE + -1;
-    DATA = DATA + 1;
-    copyBuffer[j + 0x3f0] = currOpCode;
-    j = j + 1;
-  } while ((int)j < 0x10);
-  idx = j;
-  j2 = j;
-  if (j != 0) {
-    copyBufferIndex = 0x3ef;
-    do {
-      search(copyBufferIndex);
-      copyBufferIndex = copyBufferIndex + -1;
-    } while (0x3df < copyBufferIndex);
-    search(0x3f0);
-    dataCopyIdx = 1;
-    do {
-      if ((int)j < (int)copyLen) {
-        copyLen = j;
+  uint32_t dataCopyLen = 1;
+  while (j > 0) {
+    if (j < copyLen) {
+      copyLen = j;
+    }
+    uint32_t tmpHasToBeElimitated;
+    if (copyLen < 3) {
+      dataCopyBuffer[0] = dataCopyBuffer[0] | opCode;
+      copyLen = 1;
+      dataCopyBuffer[dataCopyLen++] = copyBuffer[copyBufferIdx];
+    } else {
+      dataCopyBuffer[dataCopyLen++] = copyOffset;
+      dataCopyBuffer[dataCopyLen++] = copyOffset >> 4 & 0xf0 | copyLen - 3;
+    }
+    opCode <<= 1;
+    if ((opCode & 0x7f) == 0) {
+      for (uint32_t i = 0; i < dataCopyLen; i++) {
+        compressed[myIdx++] = dataCopyBuffer[i];
       }
-      if ((int)copyLen < 3) {
-        dataCopyBuffer[0] = dataCopyBuffer[0] | opCode;
-        copyLen = 1;
-        dataCopyBuffer[dataCopyIdx] = copyBuffer[copyBufferIdx];
-        copyBufferIndex = dataCopyIdx;
-      } else {
-        dataCopyBuffer[dataCopyIdx] = (uint8_t)copyOffset;
-        copyBufferIndex = dataCopyIdx + 1;
-        dataCopyBuffer[dataCopyIdx + 1] =
-            (uint8_t)(copyOffset >> 4 & 0xf0 | copyLen - 3);
-      }
-      dataCopyIdx = copyBufferIndex + 1;
-      currOpCode = opCode & (uint8_t)0x7f;
-      opCode = opCode << 1;
-      if (currOpCode == (uint8_t)0) {
-        copyBufferIndex = 0;
-        if (0 < dataCopyIdx) {
-          do {
-            opCode = dataCopyBuffer[copyBufferIndex];
-            compressed[myIdx++] = opCode;
-            copyBufferIndex = copyBufferIndex + 1;
-            j = j2;
-          } while (copyBufferIndex < dataCopyIdx);
-        }
-        cbiSum = cbiSum + dataCopyIdx;
-        dataCopyBuffer[0] = (uint8_t)0;
-        opCode = (uint8_t)1;
-        dataCopyIdx = 1;
-      }
-      currCopyLen = copyLen;
-      k = 0;
-      j3 = j2;
-      if (0 < (int)copyLen) {
-        do {
-          if (SIZE < 1) {
-            j3 = j2;
-            if (k < (int)currCopyLen) {
-              copyBufferIndex = currCopyLen - k;
-              do {
-                currCopyLen = nextCopyLen;
-                update(nextCopyLen);
-                nextCopyLen = currCopyLen + 1 & 0x3ff;
-                copyBufferIdx = copyBufferIdx + 1 & 0x3ff;
-                j = j - 1;
-                if (j != 0) {
-                  search(copyBufferIdx);
-                }
-                copyBufferIndex = copyBufferIndex + -1;
-                j3 = j;
-              } while (copyBufferIndex != 0);
-            }
-            break;
-          }
-          SIZE = SIZE + -1;
-          currOpCode = uncompressed.at(DATA);
-          DATA = DATA + 1;
-          j = j2;
+      dataCopyBuffer[0] = 0;
+      opCode = 1;
+      dataCopyLen = 1;
+    }
+    uint32_t currCopyLen = copyLen;
+    for (uint32_t k = 0; k < currCopyLen; k++) {
+      if (uncompressed.size() >= idx) {
+        for (uint32_t i = 0; i < currCopyLen - k; i++) {
           update(nextCopyLen);
-          copyBuffer[nextCopyLen] = currOpCode;
-          if ((int)nextCopyLen < 0xf) {
-            idksometing[nextCopyLen] = currOpCode;
-          }
           nextCopyLen = nextCopyLen + 1 & 0x3ff;
           copyBufferIdx = copyBufferIdx + 1 & 0x3ff;
-          search(copyBufferIdx);
-          k = k + 1;
-          j = j2;
-          j3 = j2;
-        } while (k < (int)currCopyLen);
+          if (--j != 0) {
+            search(copyBufferIdx);
+          }
+        }
+        break;
       }
-      j2 = j3;
-      copyBufferIndex = dataCopyIdx;
-    } while (0 < (int)j);
-    if (1 < dataCopyIdx) {
-      l = 0;
-      if (0 < dataCopyIdx) {
-        do {
-          opCode = dataCopyBuffer[l];
-          compressed[myIdx++] = opCode;
-          l = l + 1;
-        } while (l < copyBufferIndex);
-      }
-      cbiSum = cbiSum + copyBufferIndex;
+      update(nextCopyLen);
+      copyBuffer[nextCopyLen] = uncompressed.at(idx++);
+
+      nextCopyLen = nextCopyLen + 1 & 0x3ff;
+      copyBufferIdx = copyBufferIdx + 1 & 0x3ff;
+      search(copyBufferIdx);
     }
+  }
+  for (uint32_t i = 0; i < dataCopyLen; i++) {
+    compressed[myIdx++] = dataCopyBuffer[i];
   }
   return myIdx;
 }
