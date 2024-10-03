@@ -508,7 +508,7 @@ int main(int argc, char *argv[]) {
       test = true;
       continue;
     }
-    filesystem::path path(arg);
+    filesystem::path path(argv[i]);
     if (test) {
       if (is_directory(path)) {
         for (const auto &entry :
@@ -518,19 +518,19 @@ int main(int argc, char *argv[]) {
             vector<uint8_t> filecontents = readFile(currPath);
             uint32_t fcc = ((uint32_t *)filecontents.data())[1];
             size_t cmpSize = filecontents.size();
-            filecontents =
-                dec(filecontents, path, fcc == 0x6b646173 ? ADK : DNG, false);
-            filecontents = enc(filecontents, path, false);
+            filecontents = dec(filecontents, currPath,
+                               fcc == 0x6b646173 ? ADK : DNG, false);
+            filecontents = enc(filecontents, currPath, false);
             if (cmpSize > filecontents.size()) {
               cout << "saved " << cmpSize - filecontents.size()
-                   << " uint8_ts in " << path << endl;
+                   << " uint8_ts in " << currPath << endl;
             }
             if (cmpSize < filecontents.size()) {
               cerr << "lost " << filecontents.size() - cmpSize
-                   << " uint8_ts in compression size in " << path << endl;
+                   << " uint8_ts in compression size in " << currPath << endl;
             }
-            filecontents =
-                dec(filecontents, path, fcc == 0x6b646173 ? ADK : DNG, false);
+            filecontents = dec(filecontents, currPath,
+                               fcc == 0x6b646173 ? ADK : DNG, false);
           }
         }
         continue;
