@@ -1,13 +1,14 @@
 #include <algorithm> // for std::transform
 #include <cctype>    // for std::tolower
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <string>
 #include <vector>
 
-typedef unsigned int uint;
+typedef uint32_t uint;
 using namespace std;
 
 uint genCrc(byte *data, size_t length) {
@@ -655,7 +656,8 @@ void writeFile(filesystem::path path, vector<byte> filecontents) {
   outFile.close();
 }
 
-void dec(vector<byte> &filecontents, filesystem::path &path, bool adk) {
+vector<byte> dec(vector<byte> &filecontents, filesystem::path &path, bool adk,
+                 bool write) {
   string filename = path.filename().string();
   size_t cmp = filename.find(".cmp");
   filename = cmp == string::npos ? filename : filename.erase(cmp, 4);
@@ -669,7 +671,7 @@ void dec(vector<byte> &filecontents, filesystem::path &path, bool adk) {
   if (crc != expectedCrc) {
     cerr << hex << "filename crc (" << crc << ") missmatch for file " << path
          << "! excpected: " << expectedCrc << endl;
-    return;
+    return {};
   }
 
   vector<byte> data(filecontents.begin() + 20, filecontents.end());
@@ -693,10 +695,15 @@ void dec(vector<byte> &filecontents, filesystem::path &path, bool adk) {
   path.replace_filename(filename);
   path.replace_extension((adk ? ".adk" : ".dng") + path.extension().string());
 
-  writeFile(path, result);
+  if (write) {
+    writeFile(path, result);
+  }
+
+  return result;
 }
 
-void enc(vector<byte> &filecontents, filesystem::path &path) {
+vector<byte> enc(vector<byte> &filecontents, filesystem::path &path,
+                 bool write) {
   string filename = path.filename().string();
   size_t adk = filename.find(".adk");
   size_t dng = filename.find(".dng");
@@ -704,7 +711,7 @@ void enc(vector<byte> &filecontents, filesystem::path &path) {
   filename = dng == string::npos ? filename : filename.erase(dng, 4);
   if (adk == dng || (dng != string::npos && adk != string::npos)) {
     cerr << "can't determine filetype for " << path << endl;
-    return;
+    return {};
   }
   vector<byte> key = makeKey(filename,
                              path.extension().string() != ".s2m" &&
@@ -725,7 +732,11 @@ void enc(vector<byte> &filecontents, filesystem::path &path) {
   path.replace_filename(filename);
   path.replace_extension(".cmp" + path.extension().string());
 
-  writeFile(path, result);
+  if (write) {
+    writeFile(path, result);
+  }
+
+  return result;
 }
 
 vector<byte> readFile(filesystem::path path) {
@@ -739,8 +750,53 @@ vector<byte> readFile(filesystem::path path) {
 }
 
 int main(int argc, char *argv[]) {
+  bool test = false;
+  auto start = std::chrono::high_resolution_clock::now();
   for (int i = 1; i < argc; ++i) {
-    filesystem::path path(argv[i]);
+    std::string arg = argv[i];
+    if (arg == "--test" || arg == "-t") {
+      test = true;
+      continue;
+    }
+    filesystem::path path(arg);
+    if (test) {
+      if (is_directory(path)) { // TODO: do this right
+        for (const auto &entry :
+             filesystem::recursive_directory_iterator(path)) {
+          if (entry.is_regular_file()) {
+            filesystem::path currPath = entry.path();
+            vector<byte> filecontents = readFile(currPath);
+            size_t cmpSize = filecontents.size();
+            filecontents = dec(filecontents, path, false, false);
+            filecontents = enc(filecontents, path, false);
+            if (cmpSize > filecontents.size()) {
+              cout << "saved " << cmpSize - filecontents.size() << " bytes in "
+                   << path << endl;
+            }
+            if (cmpSize < filecontents.size()) {
+              cerr << "lost " << filecontents.size() - cmpSize
+                   << " bytes in compression size in " << path << endl;
+            }
+            filecontents = dec(filecontents, path, false, false);
+          }
+        }
+        continue;
+      }
+      vector<byte> filecontents = readFile(path);
+      size_t cmpSize = filecontents.size();
+      filecontents = dec(filecontents, path, false, false);
+      filecontents = enc(filecontents, path, false);
+      if (cmpSize > filecontents.size()) {
+        cout << "saved " << cmpSize - filecontents.size() << " bytes in "
+             << path << endl;
+      }
+      if (cmpSize < filecontents.size()) {
+        cerr << "lost " << filecontents.size() - cmpSize
+             << " bytes in compression size in " << path << endl;
+      }
+      filecontents = dec(filecontents, path, false, false);
+      continue;
+    }
     if (is_directory(path)) {
       for (const auto &entry : filesystem::recursive_directory_iterator(path)) {
         if (entry.is_regular_file()) {
@@ -749,7 +805,7 @@ int main(int argc, char *argv[]) {
           uint fcc = ((uint *)filecontents.data())[1];
           if (filecontents.size() >= 20 &&
               (fcc == 0x30306372 || fcc == 0x6b646173)) {
-            dec(filecontents, currPath, fcc == 0x6b646173);
+            dec(filecontents, currPath, fcc == 0x6b646173, true);
           } else {
             // enc(filecontents, currPath);
           }
@@ -760,11 +816,15 @@ int main(int argc, char *argv[]) {
       uint fcc = ((uint *)filecontents.data())[1];
       if (filecontents.size() >= 20 &&
           (fcc == 0x30306372 || fcc == 0x6b646173)) {
-        dec(filecontents, path, fcc == 0x6b646173);
+        dec(filecontents, path, fcc == 0x6b646173, true);
       } else {
-        enc(filecontents, path);
+        enc(filecontents, path, true);
       }
     }
   }
+  auto end = std::chrono::high_resolution_clock::now();
+  std::chrono::duration<double, std::milli> duration = end - start;
+
+  std::cout << "Execution time: " << duration.count() << " ms" << std::endl;
   return 0;
 }
