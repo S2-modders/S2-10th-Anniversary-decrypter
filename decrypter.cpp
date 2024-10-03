@@ -11,7 +11,11 @@
 using namespace std;
 
 enum Game { DNG, ADK };
-
+size_t allocs = 0;
+void *operator new(std::size_t size) {
+  allocs++;
+  return std::malloc(size);
+}
 uint32_t genCrc(uint8_t *data, size_t length) {
   uint32_t rnum0[256] = {
       0,          0x77073096, 0xEE0E612C, 0x990951BA, 0x76DC419,  0x706AF48F,
@@ -542,10 +546,10 @@ void search(uint32_t copybufferIdx)
   } while (true);
 }
 
-vector<uint8_t> compress(vector<uint8_t> uncompressed)
+size_t compress(vector<uint8_t> uncompressed, uint8_t *compressed)
 
 {
-  vector<uint8_t> compressed;
+  size_t idx = 0;
   uint32_t SIZE = uncompressed.size();
   uint32_t DATA = 0;
   int copyBufferIndex;
@@ -632,7 +636,7 @@ vector<uint8_t> compress(vector<uint8_t> uncompressed)
         if (0 < dataCopyIdx) {
           do {
             opCode = dataCopyBuffer[copyBufferIndex];
-            compressed.push_back(opCode);
+            compressed[idx++] = opCode;
             copyBufferIndex = copyBufferIndex + 1;
             j = j2;
           } while (copyBufferIndex < dataCopyIdx);
@@ -691,14 +695,14 @@ vector<uint8_t> compress(vector<uint8_t> uncompressed)
       if (0 < dataCopyIdx) {
         do {
           opCode = dataCopyBuffer[l];
-          compressed.push_back(opCode);
+          compressed[idx++] = opCode;
           l = l + 1;
         } while (l < copyBufferIndex);
       }
       cbiSum = cbiSum + copyBufferIndex;
     }
   }
-  return compressed;
+  return idx;
 }
 
 void writeFile(filesystem::path path, vector<uint8_t> filecontents) {
@@ -722,10 +726,11 @@ vector<uint8_t> dec(vector<uint8_t> &filecontents, filesystem::path &path,
   size_t cmp = filename.find(".cmp");
   filename = cmp == string::npos ? filename : filename.erase(cmp, 4);
 
-  uint8_t *key = makeKey(filename,
-                         path.extension().string() != ".s2m" &&
-                             path.extension().string() != ".sav",
-                         game);
+  uint8_t key[16];
+  makeKey(key, filename,
+          path.extension().string() != ".s2m" &&
+              path.extension().string() != ".sav",
+          game);
   uint32_t crc = genCrc(key, 16);
   uint32_t expectedCrc = ((uint32_t *)filecontents.data())[3];
   if (crc != expectedCrc) {
@@ -786,20 +791,25 @@ vector<uint8_t> enc(vector<uint8_t> &filecontents, filesystem::path &path,
   uint32_t filecrc = genCrc(filecontents.data(), filecontents.size());
   uint32_t crc = genCrc(key, 16);
   uint32_t size = filecontents.size();
-  uint32_t header[5] = {magic, fcc, filecrc, crc, size};
 
-  vector<uint8_t> result = compress(filecontents);
-  decrypt(result, key);
-  result.insert(result.begin(), (uint8_t *)header, ((uint8_t *)header) + 20);
+  uint8_t *result = new uint8_t[20 + (filecontents.size() + 7) / 8 * 9];
+  size_t mySize = compress(filecontents, result + 20);
+  vector<uint8_t> vecRes = std::vector(result + 20, result + mySize);
+  decrypt(vecRes, key);
+  ((uint32_t *)result)[0] = magic;
+  ((uint32_t *)result)[1] = fcc;
+  ((uint32_t *)result)[2] = filecrc;
+  ((uint32_t *)result)[3] = crc;
+  ((uint32_t *)result)[4] = size;
 
   path.replace_filename(filename);
   path.replace_extension(".cmp" + path.extension().string());
 
   if (write) {
-    writeFile(path, result);
+    writeFile(path, vecRes);
   }
 
-  return result;
+  return vecRes;
 }
 
 vector<uint8_t> readFile(filesystem::path path) {
@@ -894,6 +904,7 @@ int main(int argc, char *argv[]) {
   auto end = std::chrono::high_resolution_clock::now();
   std::chrono::duration<double, std::milli> duration = end - start;
 
+  cout << "Allocs: " << allocs << endl;
   std::cout << "Execution time: " << duration.count() << " ms" << std::endl;
   return 0;
 }
