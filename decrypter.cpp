@@ -259,7 +259,7 @@ struct Random {
   }
 
   void fill(uint8_t *arr, size_t length) {
-    for (int i = 0; i < length; i++) {
+    for (size_t i = 0; i < length; i++) {
       arr[i] = nextInt();
     }
   }
@@ -514,14 +514,13 @@ size_t compress(vector<uint8_t> uncompressed, uint8_t *compressed) {
     if (j < copyLen) {
       copyLen = j;
     }
-    uint32_t tmpHasToBeElimitated;
     if (copyLen < 3) {
       dataCopyBuffer[0] = dataCopyBuffer[0] | opCode;
       copyLen = 1;
       dataCopyBuffer[dataCopyLen++] = copyBuffer[copyBufferIdx];
     } else {
       dataCopyBuffer[dataCopyLen++] = copyOffset;
-      dataCopyBuffer[dataCopyLen++] = copyOffset >> 4 & 0xf0 | copyLen - 3;
+      dataCopyBuffer[dataCopyLen++] = (copyOffset >> 4 & 0xf0) | (copyLen - 3);
     }
     opCode <<= 1;
     if ((opCode & 0x7f) == 0) {
@@ -537,8 +536,8 @@ size_t compress(vector<uint8_t> uncompressed, uint8_t *compressed) {
       if (uncompressed.size() >= idx) {
         for (uint32_t i = 0; i < currCopyLen - k; i++) {
           update(nextCopyLen);
-          nextCopyLen = nextCopyLen + 1 & 0x3ff;
-          copyBufferIdx = copyBufferIdx + 1 & 0x3ff;
+          nextCopyLen = (nextCopyLen + 1) & 0x3ff;
+          copyBufferIdx = (copyBufferIdx + 1) & 0x3ff;
           if (--j != 0) {
             search(copyBufferIdx);
           }
@@ -548,8 +547,8 @@ size_t compress(vector<uint8_t> uncompressed, uint8_t *compressed) {
       update(nextCopyLen);
       copyBuffer[nextCopyLen] = uncompressed.at(idx++);
 
-      nextCopyLen = nextCopyLen + 1 & 0x3ff;
-      copyBufferIdx = copyBufferIdx + 1 & 0x3ff;
+      nextCopyLen = (nextCopyLen + 1) & 0x3ff;
+      copyBufferIdx = (copyBufferIdx + 1) & 0x3ff;
       search(copyBufferIdx);
     }
   }
