@@ -300,9 +300,9 @@ void decrypt(vector<uint8_t> &data, vector<uint8_t> &key) {
   }
 }
 
-vector<uint8_t> decopress(vector<uint8_t> &compressed) {
-  vector<uint8_t> decompressed;
-  decompressed.reserve(compressed.size());
+bool decopress(vector<uint8_t> &compressed, uint8_t *decompressed,
+               size_t size) {
+  size_t idx = 0;
   uint8_t copyBuffer[0x400];
   fill(begin(copyBuffer), end(copyBuffer), (uint8_t)0x20);
   uint32_t copyBufferIdx = 0x3f0;
@@ -315,7 +315,9 @@ vector<uint8_t> decopress(vector<uint8_t> &compressed) {
       uint32_t num = uint8_t1 | (curr & 0xf0) << 4;
       for (int j = 0; j < (curr & 0xf) + 3; j++) {
         uint8_t copied = copyBuffer[(j + num) & 0x3ff];
-        decompressed.push_back(copied);
+        if (idx == size)
+          return false;
+        decompressed[idx++] = copied;
         copyBuffer[copyBufferIdx++] = copied;
         copyBufferIdx &= 0x3ff;
       }
@@ -323,7 +325,9 @@ vector<uint8_t> decopress(vector<uint8_t> &compressed) {
       mode = curr | 0xff00;
     } else {
       if ((mode & 1) == 1) {
-        decompressed.push_back(curr);
+        if (idx == size)
+          return false;
+        decompressed[idx++] = curr;
         copyBuffer[copyBufferIdx++] = curr;
         copyBufferIdx &= 0x3ff;
       } else {
@@ -333,7 +337,7 @@ vector<uint8_t> decopress(vector<uint8_t> &compressed) {
       mode >>= 1;
     }
   }
-  return decompressed;
+  return idx == size;
 }
 
 // TODO: there is some undef behavior, which prevents code optimization
@@ -684,31 +688,32 @@ vector<uint8_t> dec(vector<uint8_t> &filecontents, filesystem::path &path,
 
   vector<uint8_t> data(filecontents.begin() + 20, filecontents.end());
   decrypt(data, key);
-  vector<uint8_t> result = decopress(data);
+  uint32_t expcetedSize = ((uint32_t *)filecontents.data())[4];
+  uint8_t *result = new uint8_t[expcetedSize];
+  bool success = decopress(data, result, expcetedSize);
 
-  crc = genCrc(result.data(), result.size());
+  if (!success) {
+    cerr << dec << "file size missmatch for file " << path << endl;
+    return {};
+  }
+
+  crc = genCrc(result, expcetedSize);
   expectedCrc = ((uint32_t *)filecontents.data())[2];
   if (crc != expectedCrc) {
     cerr << hex << "filedata crc (" << crc << ") missmatch for file " << path
          << "! excpected: " << expectedCrc << endl;
   }
 
-  uint32_t size = result.size();
-  uint32_t expcetedSize = ((uint32_t *)filecontents.data())[4];
-  if (size != expcetedSize) {
-    cerr << dec << "file size (" << size << ") missmatch for file " << path
-         << "! excpected: " << expcetedSize << endl;
-  }
-
   path.replace_filename(filename);
   path.replace_extension((game == ADK ? ".adk" : ".dng") +
                          path.extension().string());
 
+  vector<uint8_t> vecRes(result, result + expcetedSize);
   if (write) {
-    writeFile(path, result);
+    writeFile(path, vecRes);
   }
 
-  return result;
+  return vecRes;
 }
 
 vector<uint8_t> enc(vector<uint8_t> &filecontents, filesystem::path &path,
