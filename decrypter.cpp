@@ -10,6 +10,8 @@
 
 using namespace std;
 
+enum Game { DNG, ADK };
+
 uint32_t genCrc(uint8_t *data, size_t length) {
   uint32_t rnum0[256] = {
       0,          0x77073096, 0xEE0E612C, 0x990951BA, 0x76DC419,  0x706AF48F,
@@ -259,11 +261,11 @@ struct Random {
   }
 };
 
-vector<uint8_t> makeKey(string &filename, bool randomize, bool adk) {
+vector<uint8_t> makeKey(string &filename, bool randomize, Game game) {
   uint32_t keyIntAdK[4] = {0xbdc28cbd, 0xf84b6730, 0xf91b9bb4, 0xf42e82f6};
   uint32_t keyInt[4] = {0xca4659c9, 0xa4ff0d9, 0xb8aa00a1, 0x6bdbe8cb};
-  vector<uint8_t> key((uint8_t *)(adk ? keyIntAdK : keyInt),
-                      ((uint8_t *)(adk ? keyIntAdK : keyInt) + 16));
+  vector<uint8_t> key((uint8_t *)(game == ADK ? keyIntAdK : keyInt),
+                      ((uint8_t *)(game == ADK ? keyIntAdK : keyInt) + 16));
   if (!randomize)
     return key;
   string lowercaseFilename;
@@ -663,7 +665,7 @@ void writeFile(filesystem::path path, vector<uint8_t> filecontents) {
 }
 
 vector<uint8_t> dec(vector<uint8_t> &filecontents, filesystem::path &path,
-                    bool adk, bool write) {
+                    Game game, bool write) {
   string filename = path.filename().string();
   size_t cmp = filename.find(".cmp");
   filename = cmp == string::npos ? filename : filename.erase(cmp, 4);
@@ -671,7 +673,7 @@ vector<uint8_t> dec(vector<uint8_t> &filecontents, filesystem::path &path,
   vector<uint8_t> key = makeKey(filename,
                                 path.extension().string() != ".s2m" &&
                                     path.extension().string() != ".sav",
-                                adk);
+                                game);
   uint32_t crc = genCrc(key.data(), key.size());
   uint32_t expectedCrc = ((uint32_t *)filecontents.data())[3];
   if (crc != expectedCrc) {
@@ -699,7 +701,8 @@ vector<uint8_t> dec(vector<uint8_t> &filecontents, filesystem::path &path,
   }
 
   path.replace_filename(filename);
-  path.replace_extension((adk ? ".adk" : ".dng") + path.extension().string());
+  path.replace_extension((game == ADK ? ".adk" : ".dng") +
+                         path.extension().string());
 
   if (write) {
     writeFile(path, result);
@@ -722,7 +725,7 @@ vector<uint8_t> enc(vector<uint8_t> &filecontents, filesystem::path &path,
   vector<uint8_t> key = makeKey(filename,
                                 path.extension().string() != ".s2m" &&
                                     path.extension().string() != ".sav",
-                                adk != string::npos);
+                                adk != string::npos ? ADK : DNG);
 
   uint32_t magic = 0x06091812;
   uint32_t fcc = (adk != string::npos) ? 0x6b646173 : 0x30306372;
@@ -766,14 +769,16 @@ int main(int argc, char *argv[]) {
     }
     filesystem::path path(arg);
     if (test) {
-      if (is_directory(path)) { // TODO: do this right
+      if (is_directory(path)) {
         for (const auto &entry :
              filesystem::recursive_directory_iterator(path)) {
           if (entry.is_regular_file()) {
             filesystem::path currPath = entry.path();
             vector<uint8_t> filecontents = readFile(currPath);
+            uint32_t fcc = ((uint32_t *)filecontents.data())[1];
             size_t cmpSize = filecontents.size();
-            filecontents = dec(filecontents, path, false, false);
+            filecontents =
+                dec(filecontents, path, fcc == 0x6b646173 ? ADK : DNG, false);
             filecontents = enc(filecontents, path, false);
             if (cmpSize > filecontents.size()) {
               cout << "saved " << cmpSize - filecontents.size()
@@ -783,14 +788,17 @@ int main(int argc, char *argv[]) {
               cerr << "lost " << filecontents.size() - cmpSize
                    << " uint8_ts in compression size in " << path << endl;
             }
-            filecontents = dec(filecontents, path, false, false);
+            filecontents =
+                dec(filecontents, path, fcc == 0x6b646173 ? ADK : DNG, false);
           }
         }
         continue;
       }
       vector<uint8_t> filecontents = readFile(path);
+      uint32_t fcc = ((uint32_t *)filecontents.data())[1];
       size_t cmpSize = filecontents.size();
-      filecontents = dec(filecontents, path, false, false);
+      filecontents =
+          dec(filecontents, path, fcc == 0x6b646173 ? ADK : DNG, false);
       filecontents = enc(filecontents, path, false);
       if (cmpSize > filecontents.size()) {
         cout << "saved " << cmpSize - filecontents.size() << " uint8_ts in "
@@ -800,7 +808,8 @@ int main(int argc, char *argv[]) {
         cerr << "lost " << filecontents.size() - cmpSize
              << " uint8_ts in compression size in " << path << endl;
       }
-      filecontents = dec(filecontents, path, false, false);
+      filecontents =
+          dec(filecontents, path, fcc == 0x6b646173 ? ADK : DNG, false);
       continue;
     }
     if (is_directory(path)) {
@@ -811,7 +820,7 @@ int main(int argc, char *argv[]) {
           uint32_t fcc = ((uint32_t *)filecontents.data())[1];
           if (filecontents.size() >= 20 &&
               (fcc == 0x30306372 || fcc == 0x6b646173)) {
-            dec(filecontents, currPath, fcc == 0x6b646173, true);
+            dec(filecontents, currPath, fcc == 0x6b646173 ? ADK : DNG, true);
           } else {
             // enc(filecontents, currPath);
           }
@@ -822,7 +831,7 @@ int main(int argc, char *argv[]) {
       uint32_t fcc = ((uint32_t *)filecontents.data())[1];
       if (filecontents.size() >= 20 &&
           (fcc == 0x30306372 || fcc == 0x6b646173)) {
-        dec(filecontents, path, fcc == 0x6b646173, true);
+        dec(filecontents, path, fcc == 0x6b646173 ? ADK : DNG, true);
       } else {
         enc(filecontents, path, true);
       }
