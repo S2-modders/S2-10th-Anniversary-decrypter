@@ -8,11 +8,10 @@
 #include <string>
 #include <vector>
 
-typedef uint32_t uint;
 using namespace std;
 
-uint genCrc(byte *data, size_t length) {
-  uint rnum0[256] = {
+uint32_t genCrc(byte *data, size_t length) {
+  uint32_t rnum0[256] = {
       0,          0x77073096, 0xEE0E612C, 0x990951BA, 0x76DC419,  0x706AF48F,
       0xE963A535, 0x9E6495A3, 0xEDB8832,  0x79DCB8A4, 0xE0D5E91E, 0x97D2D988,
       0x9B64C2B,  0x7EB17CBD, 0xE7B82D07, 0x90BF1D91, 0x1DB71064, 0x6AB020F2,
@@ -56,7 +55,7 @@ uint genCrc(byte *data, size_t length) {
       0xBDBDF21C, 0xCABAC28A, 0x53B39330, 0x24B4A3A6, 0xBAD03605, 0xCDD70693,
       0x54DE5729, 0x23D967BF, 0xB3667A2E, 0xC4614AB8, 0x5D681B02, 0x2A6F2B94,
       0xB40BBE37, 0xC30C8EA1, 0x5A05DF1B, 0x2D02EF8D};
-  uint rnum1[256] = {
+  uint32_t rnum1[256] = {
       0,          0x191B3141, 0x32366282, 0x2B2D53C3, 0x646CC504, 0x7D77F445,
       0x565AA786, 0x4F4196C7, 0xC8D98A08, 0xD1C2BB49, 0xFAEFE88A, 0xE3F4D9CB,
       0xACB54F0C, 0xB5AE7E4D, 0x9E832D8E, 0x87981CCF, 0x4AC21251, 0x53D92310,
@@ -100,7 +99,7 @@ uint genCrc(byte *data, size_t length) {
       0x14BCE1BD, 0xDA7D0FC,  0x268A833F, 0x3F91B27E, 0x70D024B9, 0x69CB15F8,
       0x42E6463B, 0x5BFD777A, 0xDC656BB5, 0xC57E5AF4, 0xEE530937, 0xF7483876,
       0xB809AEB1, 0xA1129FF0, 0x8A3FCC33, 0x9324FD72};
-  uint rnum2[256] = {
+  uint32_t rnum2[256] = {
       0,          0x1C26A37,  0x384D46E,  0x246BE59,  0x709A8DC,  0x6CBC2EB,
       0x48D7CB2,  0x54F1685,  0xE1351B8,  0xFD13B8F,  0xD9785D6,  0xC55EFE1,
       0x91AF964,  0x8D89353,  0xA9E2D0A,  0xB5C473D,  0x1C26A370, 0x1DE4C947,
@@ -144,7 +143,7 @@ uint genCrc(byte *data, size_t length) {
       0xB5C473D0, 0xB40619E7, 0xB640A7BE, 0xB782CD89, 0xB2CDDB0C, 0xB30FB13B,
       0xB1490F62, 0xB08B6555, 0xBBD72268, 0xBA15485F, 0xB853F606, 0xB9919C31,
       0xBCDE8AB4, 0xBD1CE083, 0xBF5A5EDA, 0xBE9834ED};
-  uint rnum3[256] = {
+  uint32_t rnum3[256] = {
       0,          0xB8BC6765, 0xAA09C88B, 0x12B5AFEE, 0x8F629757, 0x37DEF032,
       0x256B5FDC, 0x9DD738B9, 0xC5B428EF, 0x7D084F8A, 0x6FBDE064, 0xD7018701,
       0x4AD6BFB8, 0xF26AD8DD, 0xE0DF7733, 0x58631056, 0x5019579F, 0xE8A530FA,
@@ -188,9 +187,9 @@ uint genCrc(byte *data, size_t length) {
       0x866616A7, 0x3EDA71C2, 0x2C6FDE2C, 0x94D3B949, 0x90481F0,  0xB1B8E695,
       0xA30D497B, 0x1BB12E1E, 0x43D23E48, 0xFB6E592D, 0xE9DBF6C3, 0x516791A6,
       0xCCB0A91F, 0x740CCE7A, 0x66B96194, 0xDE0506F1};
-  uint i = 0;
-  uint div = 0xffffffff;
-  uint *intData = (uint *)data;
+  uint32_t i = 0;
+  uint32_t div = 0xffffffff;
+  uint32_t *intData = (uint32_t *)data;
   for (; i + 32 < length; i += 32) {
     div = div ^ intData[i / 4];
     for (int j = 1; j < 8; j++) {
@@ -207,31 +206,31 @@ uint genCrc(byte *data, size_t length) {
   }
 
   for (; i < length; i++) {
-    div = (div >> 8) ^ rnum0[(uint)(data[i] ^ (byte)div)];
+    div = (div >> 8) ^ rnum0[(uint32_t)(data[i] ^ (byte)div)];
   }
 
   return ~div;
 }
 
 struct Random {
-  uint seed;
-  Random(uint crc) {
-    uint rBitPositions[8] = {0xC, 0x17, 0xA, 0x19, 0x8, 0x1B, 0x6, 0x1D};
+  uint32_t seed;
+  Random(uint32_t crc) {
+    uint32_t rBitPositions[8] = {0xC, 0x17, 0xA, 0x19, 0x8, 0x1B, 0x6, 0x1D};
     seed = crc & 0x7fffffff;
 
     int population = 0;
-    for (uint i = 0; i < 0x1f; i++) {
+    for (uint32_t i = 0; i < 0x1f; i++) {
       population += (seed >> i) & 1;
     }
 
     // set bits
-    for (uint i = 0; i + population < 8; i++) {
+    for (uint32_t i = 0; i + population < 8; i++) {
       seed |= 1 << rBitPositions[i];
     }
 
     // remove bits
     if (24 < population) {
-      for (uint i = 0; i + population < 32; i++) {
+      for (uint32_t i = 0; i + population < 32; i++) {
         seed &= ~(1 << rBitPositions[i]);
       }
     }
@@ -239,9 +238,9 @@ struct Random {
     seed = seed == 0 ? 1 : seed & 0x7fffffff;
   }
 
-  uint nextInt() {
-    uint upper = (seed >> 0x10) * 0x41a7;
-    uint lower = (seed & 0xffff) * 0x41a7;
+  uint32_t nextInt() {
+    uint32_t upper = (seed >> 0x10) * 0x41a7;
+    uint32_t lower = (seed & 0xffff) * 0x41a7;
     seed = lower + (upper & 0x7fff) * 0x10000;
     if (0x7fffffff < seed) {
       seed = (seed & 0x7fffffff) + 1;
@@ -263,8 +262,8 @@ struct Random {
 };
 
 vector<byte> makeKey(string &filename, bool randomize, bool adk) {
-  uint keyIntAdK[4] = {0xbdc28cbd, 0xf84b6730, 0xf91b9bb4, 0xf42e82f6};
-  uint keyInt[4] = {0xca4659c9, 0xa4ff0d9, 0xb8aa00a1, 0x6bdbe8cb};
+  uint32_t keyIntAdK[4] = {0xbdc28cbd, 0xf84b6730, 0xf91b9bb4, 0xf42e82f6};
+  uint32_t keyInt[4] = {0xca4659c9, 0xa4ff0d9, 0xb8aa00a1, 0x6bdbe8cb};
   vector<byte> key((byte *)(adk ? keyIntAdK : keyInt),
                    ((byte *)(adk ? keyIntAdK : keyInt) + 16));
   if (!randomize)
@@ -276,7 +275,7 @@ vector<byte> makeKey(string &filename, bool randomize, bool adk) {
 
   Random random(
       genCrc((byte *)lowercaseFilename.data(), lowercaseFilename.size()));
-  for (uint i = 0; i < 16; i++) {
+  for (uint32_t i = 0; i < 16; i++) {
     key[i] ^= random.nextByte();
   }
   return key;
@@ -284,20 +283,20 @@ vector<byte> makeKey(string &filename, bool randomize, bool adk) {
 
 void decrypt(vector<byte> &data, vector<byte> &key) {
   Random random(genCrc(key.data(), key.size()));
-  uint length = (random.nextInt() & 0x7f) + 0x80;
+  uint32_t length = (random.nextInt() & 0x7f) + 0x80;
   byte rA1[0x80 + 0x7f];
   random.fill(rA1, length);
-  for (uint i = 0; i < data.size(); i++) {
+  for (uint32_t i = 0; i < data.size(); i++) {
     data[i] ^= rA1[i % length];
   }
 
   length = (random.nextInt() & 0xf) + 0x11;
   byte rA2[0x11 + 0xf];
   random.fill(rA2, length);
-  uint i = random.nextInt() % data.size();
-  uint offset = (random.nextInt() & 0x1fff) + 0x2000;
+  uint32_t i = random.nextInt() % data.size();
+  uint32_t offset = (random.nextInt() & 0x1fff) + 0x2000;
   for (; i < data.size(); i += offset) {
-    data[i] ^= rA2[((uint)key[i % key.size()] ^ i) % length];
+    data[i] ^= rA2[((uint32_t)key[i % key.size()] ^ i) % length];
   }
 }
 
@@ -306,22 +305,22 @@ vector<byte> decopress(vector<byte> &compressed) {
   decompressed.reserve(compressed.size());
   byte copyBuffer[0x400];
   fill(begin(copyBuffer), end(copyBuffer), (byte)0x20);
-  uint copyBufferIdx = 0x3f0;
+  uint32_t copyBufferIdx = 0x3f0;
   bool copy = false;
   byte byte1;
-  uint mode = 0;
+  uint32_t mode = 0;
   for (byte curr : compressed) {
     if (copy) {
       copy = false;
-      uint num = (uint)byte1 | ((uint)curr & 0xf0) << 4;
-      for (int j = 0; j < ((uint)curr & 0xf) + 3; j++) {
+      uint32_t num = (uint32_t)byte1 | ((uint32_t)curr & 0xf0) << 4;
+      for (int j = 0; j < ((uint32_t)curr & 0xf) + 3; j++) {
         byte copied = copyBuffer[(j + num) & 0x3ff];
         decompressed.push_back(copied);
         copyBuffer[copyBufferIdx++] = copied;
         copyBufferIdx &= 0x3ff;
       }
     } else if ((mode & 0x100) == 0) {
-      mode = (uint)curr | 0xff00;
+      mode = (uint32_t)curr | 0xff00;
     } else {
       if ((mode & 1) == 1) {
         decompressed.push_back(curr);
@@ -337,24 +336,25 @@ vector<byte> decopress(vector<byte> &compressed) {
   return decompressed;
 }
 
-uint dataBuffer1[1026];
-uint copyBufferInt2[1281];
-uint copyOffset;
-uint copyBufferInt[1025];
+// TODO: there is some undef behavior, which prevents code optimization
+uint32_t dataBuffer1[1026];
+uint32_t copyBufferInt2[1281];
+uint32_t copyOffset;
+uint32_t copyBufferInt[1025];
 byte copyBuffer[1024];
 byte idksometing[16];
-uint idx;
-uint cbiSum;
-uint copyLen;
+uint32_t idx;
+uint32_t cbiSum;
+uint32_t copyLen;
 
-void update(uint copyLen)
+void update(uint32_t copyLen)
 
 {
-  uint curr;
-  uint myCurr;
-  uint *tmp;
-  uint tmp2;
-  uint tmp3;
+  uint32_t curr;
+  uint32_t myCurr;
+  uint32_t *tmp;
+  uint32_t tmp2;
+  uint32_t tmp3;
 
   tmp = dataBuffer1 + copyLen;
   if (dataBuffer1[copyLen] != 0x400) {
@@ -393,23 +393,23 @@ void update(uint copyLen)
   return;
 }
 
-void search(uint copybufferIdx)
+void search(uint32_t copybufferIdx)
 
 {
   int diff;
-  uint currCopyOffest;
+  uint32_t currCopyOffest;
   int currCopyLen;
-  uint currIdx;
+  uint32_t currIdx;
   int lastCopyLen;
   byte curr;
-  uint *tmp;
+  uint32_t *tmp;
 
   curr = copyBuffer[copybufferIdx];
   diff = 1;
   copyBufferInt[copybufferIdx] = 0x400;
   copyBufferInt2[copybufferIdx] = 0x400;
   copyLen = 0;
-  currIdx = (uint)curr + 0x401;
+  currIdx = (uint32_t)curr + 0x401;
   lastCopyLen = 0;
   do {
     if (diff < 0) {
@@ -429,30 +429,34 @@ void search(uint copybufferIdx)
     }
     currCopyLen = 1;
     do {
-      diff = (uint)copyBuffer[copybufferIdx + currCopyLen] -
-             (uint)copyBuffer[currCopyLen + currCopyOffest];
+      diff = (uint32_t)copyBuffer[copybufferIdx + currCopyLen] -
+             (uint32_t)copyBuffer[currCopyLen + currCopyOffest];
       if (diff != 0)
         break;
-      diff = (uint) * (byte *)(currCopyLen + copyBuffer + 1 + copybufferIdx) -
-             (uint) * (byte *)(currCopyLen + copyBuffer + 1 + currCopyOffest);
+      diff =
+          (uint32_t) * (byte *)(currCopyLen + copyBuffer + 1 + copybufferIdx) -
+          (uint32_t) * (byte *)(currCopyLen + copyBuffer + 1 + currCopyOffest);
       if (diff != 0) {
         currCopyLen = currCopyLen + 1;
         break;
       }
-      diff = (uint) * (byte *)(currCopyLen + copyBuffer + 2 + copybufferIdx) -
-             (uint) * (byte *)(currCopyLen + copyBuffer + 2 + currCopyOffest);
+      diff =
+          (uint32_t) * (byte *)(currCopyLen + copyBuffer + 2 + copybufferIdx) -
+          (uint32_t) * (byte *)(currCopyLen + copyBuffer + 2 + currCopyOffest);
       if (diff != 0) {
         currCopyLen = currCopyLen + 2;
         break;
       }
-      diff = (uint) * (byte *)(currCopyLen + copyBuffer + 3 + copybufferIdx) -
-             (uint) * (byte *)(currCopyLen + copyBuffer + 3 + currCopyOffest);
+      diff =
+          (uint32_t) * (byte *)(currCopyLen + copyBuffer + 3 + copybufferIdx) -
+          (uint32_t) * (byte *)(currCopyLen + copyBuffer + 3 + currCopyOffest);
       if (diff != 0) {
         currCopyLen = currCopyLen + 3;
         break;
       }
-      diff = (uint) * (byte *)(currCopyLen + copyBuffer + 4 + copybufferIdx) -
-             (uint) * (byte *)(currCopyLen + copyBuffer + 4 + currCopyOffest);
+      diff =
+          (uint32_t) * (byte *)(currCopyLen + copyBuffer + 4 + copybufferIdx) -
+          (uint32_t) * (byte *)(currCopyLen + copyBuffer + 4 + currCopyOffest);
       if (diff != 0) {
         currCopyLen = currCopyLen + 4;
         break;
@@ -486,25 +490,25 @@ vector<byte> compress(vector<byte> uncompressed)
 
 {
   vector<byte> compressed;
-  uint SIZE = uncompressed.size();
-  uint DATA = 0;
+  uint32_t SIZE = uncompressed.size();
+  uint32_t DATA = 0;
   int copyBufferIndex;
   int i;
-  uint j;
-  uint *myCopyBuffer;
+  uint32_t j;
+  uint32_t *myCopyBuffer;
   int k;
   int l;
   byte opCode;
-  uint j2;
+  uint32_t j2;
   int dataCopyIdx;
-  uint copyBufferIdx;
-  uint nextCopyLen;
+  uint32_t copyBufferIdx;
+  uint32_t nextCopyLen;
   byte dataCopyBuffer[20];
-  uint *myDataBuffer1;
-  uint currCopyLen;
+  uint32_t *myDataBuffer1;
+  uint32_t currCopyLen;
   byte currOpCode;
-  uint j3;
-  uint *myDataBuffer0;
+  uint32_t j3;
+  uint32_t *myDataBuffer0;
   void *start;
   byte *tmp;
 
@@ -525,7 +529,7 @@ vector<byte> compress(vector<byte> uncompressed)
   opCode = (byte)1;
   nextCopyLen = 0;
   copyBufferIdx = 0x3f0;
-  myCopyBuffer = (uint *)copyBuffer;
+  myCopyBuffer = (uint32_t *)copyBuffer;
   for (i = 0xfc; i != 0; i = i + -1) {
     *myCopyBuffer = 0x20202020;
     myCopyBuffer = myCopyBuffer + 1;
@@ -666,8 +670,8 @@ vector<byte> dec(vector<byte> &filecontents, filesystem::path &path, bool adk,
                              path.extension().string() != ".s2m" &&
                                  path.extension().string() != ".sav",
                              adk);
-  uint crc = genCrc(key.data(), key.size());
-  uint expectedCrc = ((uint *)filecontents.data())[3];
+  uint32_t crc = genCrc(key.data(), key.size());
+  uint32_t expectedCrc = ((uint32_t *)filecontents.data())[3];
   if (crc != expectedCrc) {
     cerr << hex << "filename crc (" << crc << ") missmatch for file " << path
          << "! excpected: " << expectedCrc << endl;
@@ -679,14 +683,14 @@ vector<byte> dec(vector<byte> &filecontents, filesystem::path &path, bool adk,
   vector<byte> result = decopress(data);
 
   crc = genCrc(result.data(), result.size());
-  expectedCrc = ((uint *)filecontents.data())[2];
+  expectedCrc = ((uint32_t *)filecontents.data())[2];
   if (crc != expectedCrc) {
     cerr << hex << "filedata crc (" << crc << ") missmatch for file " << path
          << "! excpected: " << expectedCrc << endl;
   }
 
-  uint size = result.size();
-  uint expcetedSize = ((uint *)filecontents.data())[4];
+  uint32_t size = result.size();
+  uint32_t expcetedSize = ((uint32_t *)filecontents.data())[4];
   if (size != expcetedSize) {
     cerr << dec << "file size (" << size << ") missmatch for file " << path
          << "! excpected: " << expcetedSize << endl;
@@ -718,12 +722,12 @@ vector<byte> enc(vector<byte> &filecontents, filesystem::path &path,
                                  path.extension().string() != ".sav",
                              adk != string::npos);
 
-  uint magic = 0x06091812;
-  uint fcc = (adk != string::npos) ? 0x6b646173 : 0x30306372;
-  uint filecrc = genCrc(filecontents.data(), filecontents.size());
-  uint crc = genCrc(key.data(), key.size());
-  uint size = filecontents.size();
-  uint header[5] = {magic, fcc, filecrc, crc, size};
+  uint32_t magic = 0x06091812;
+  uint32_t fcc = (adk != string::npos) ? 0x6b646173 : 0x30306372;
+  uint32_t filecrc = genCrc(filecontents.data(), filecontents.size());
+  uint32_t crc = genCrc(key.data(), key.size());
+  uint32_t size = filecontents.size();
+  uint32_t header[5] = {magic, fcc, filecrc, crc, size};
 
   vector<byte> result = compress(filecontents);
   decrypt(result, key);
@@ -802,7 +806,7 @@ int main(int argc, char *argv[]) {
         if (entry.is_regular_file()) {
           filesystem::path currPath = entry.path();
           vector<byte> filecontents = readFile(currPath);
-          uint fcc = ((uint *)filecontents.data())[1];
+          uint32_t fcc = ((uint32_t *)filecontents.data())[1];
           if (filecontents.size() >= 20 &&
               (fcc == 0x30306372 || fcc == 0x6b646173)) {
             dec(filecontents, currPath, fcc == 0x6b646173, true);
@@ -813,7 +817,7 @@ int main(int argc, char *argv[]) {
       }
     } else {
       vector<byte> filecontents = readFile(path);
-      uint fcc = ((uint *)filecontents.data())[1];
+      uint32_t fcc = ((uint32_t *)filecontents.data())[1];
       if (filecontents.size() >= 20 &&
           (fcc == 0x30306372 || fcc == 0x6b646173)) {
         dec(filecontents, path, fcc == 0x6b646173, true);
