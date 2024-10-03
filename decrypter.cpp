@@ -391,7 +391,6 @@ bool decopress(vector<uint8_t> &compressed, uint8_t *decompressed,
   return idx == size;
 }
 
-// TODO: there is some undef behavior, which prevents code optimization
 uint32_t dataBuffer[1026];
 uint32_t cbi0[1281];
 uint32_t cbi1[1025];
