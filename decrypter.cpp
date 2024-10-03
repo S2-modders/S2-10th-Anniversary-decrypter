@@ -265,7 +265,7 @@ struct Random {
   }
 };
 
-void initKey(uint8_t(key)[16], Game game) {
+void initKey(uint8_t (&key)[16], Game game) {
   switch (game) {
   case ADK:
     key[0] = 0xbd;
@@ -311,18 +311,18 @@ void initKey(uint8_t(key)[16], Game game) {
   }
 }
 
-void randomizeKey(uint8_t(key)[16], uint8_t *filenameLowerCase, size_t length) {
+void randomizeKey(uint8_t (&key)[16], uint8_t *filenameLowerCase,
+                  size_t length) {
   Random random(genCrc(filenameLowerCase, length));
-  for (uint32_t i = 0; i < 16; i++) {
+  for (uint32_t i = 0; i < sizeof(key); i++) {
     key[i] ^= random.nextInt();
   }
 }
 
-uint8_t *makeKey(uint8_t(key)[16], string &filename, bool randomize,
-                 Game game) {
+void makeKey(uint8_t (&key)[16], string &filename, bool randomize, Game game) {
   initKey(key, game);
   if (!randomize)
-    return key;
+    return;
   string lowercaseFilename;
   lowercaseFilename.resize(filename.size());
   transform(filename.begin(), filename.end(), lowercaseFilename.begin(),
@@ -330,11 +330,10 @@ uint8_t *makeKey(uint8_t(key)[16], string &filename, bool randomize,
 
   randomizeKey(key, (uint8_t *)lowercaseFilename.data(),
                lowercaseFilename.size());
-  return key;
 }
 
-void decrypt(vector<uint8_t> &data, uint8_t *key) {
-  Random random(genCrc(key, 16));
+void decrypt(vector<uint8_t> &data, uint8_t (&key)[16]) {
+  Random random(genCrc(key, sizeof(key)));
   uint32_t length = (random.nextInt() & 0x7f) + 0x80;
   uint8_t rA1[0x80 + 0x7f];
   random.fill(rA1, length);
@@ -348,7 +347,7 @@ void decrypt(vector<uint8_t> &data, uint8_t *key) {
   uint32_t i = random.nextInt() % data.size();
   uint32_t offset = (random.nextInt() & 0x1fff) + 0x2000;
   for (; i < data.size(); i += offset) {
-    data[i] ^= rA2[(key[i % 16] ^ i) % length];
+    data[i] ^= rA2[(key[i % sizeof(key)] ^ i) % length];
   }
 }
 
@@ -789,7 +788,7 @@ vector<uint8_t> enc(vector<uint8_t> &filecontents, filesystem::path &path,
   uint32_t magic = 0x06091812;
   uint32_t fcc = (adk != string::npos) ? 0x6b646173 : 0x30306372;
   uint32_t filecrc = genCrc(filecontents.data(), filecontents.size());
-  uint32_t crc = genCrc(key, 16);
+  uint32_t crc = genCrc(key, sizeof(key));
   uint32_t size = filecontents.size();
 
   uint8_t *result = new uint8_t[20 + (filecontents.size() + 7) / 8 * 9];
