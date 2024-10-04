@@ -591,7 +591,7 @@ vector<uint8_t> dec(uint8_t *filecontents, size_t size, filesystem::path &path,
   return vecRes;
 }
 
-vector<uint8_t> enc(vector<uint8_t> &filecontents, filesystem::path &path,
+vector<uint8_t> enc(uint8_t *filecontents, size_t size, filesystem::path &path,
                     bool write) {
   string filename = path.filename().string();
   size_t adk = filename.find(".adk");
@@ -610,13 +610,11 @@ vector<uint8_t> enc(vector<uint8_t> &filecontents, filesystem::path &path,
 
   uint32_t magic = 0x06091812;
   uint32_t fcc = (adk != string::npos) ? 0x6b646173 : 0x30306372;
-  uint32_t filecrc = genCrc(filecontents.data(), filecontents.size());
+  uint32_t filecrc = genCrc(filecontents, size);
   uint32_t crc = genCrc(key, sizeof(key));
-  uint32_t size = filecontents.size();
 
-  uint8_t *result = new uint8_t[20 + (filecontents.size() + 7) / 8 * 9];
-  size_t mySize =
-      compress(filecontents.data(), filecontents.size(), result + 20);
+  uint8_t *result = new uint8_t[20 + (size + 7) / 8 * 9];
+  size_t mySize = compress(filecontents, size, result + 20);
   decrypt(key, result + 20, mySize);
   ((uint32_t *)result)[0] = magic;
   ((uint32_t *)result)[1] = fcc;
@@ -671,7 +669,8 @@ int main(int argc, char *argv[]) {
                                currPath, fcc == 0x6b646173 ? ADK : DNG, false);
             if (filecontents.size() == 0)
               continue;
-            filecontents = enc(filecontents, currPath, false);
+            filecontents =
+                enc(filecontents.data(), filecontents.size(), currPath, false);
             if (cmpSize > filecontents.size()) {
               cout << "saved " << cmpSize - filecontents.size()
                    << " uint8_ts in " << currPath << endl;
@@ -695,7 +694,7 @@ int main(int argc, char *argv[]) {
                          fcc == 0x6b646173 ? ADK : DNG, false);
       if (filecontents.size() == 0)
         continue;
-      filecontents = enc(filecontents, path, false);
+      filecontents = enc(filecontents.data(), filecontents.size(), path, false);
       if (cmpSize > filecontents.size()) {
         cout << "saved " << cmpSize - filecontents.size() << " uint8_ts in "
              << path << endl;
@@ -731,7 +730,7 @@ int main(int argc, char *argv[]) {
         dec(filecontents.data(), filecontents.size(), path,
             fcc == 0x6b646173 ? ADK : DNG, true);
       } else {
-        enc(filecontents, path, true);
+        enc(filecontents.data(), filecontents.size(), path, true);
       }
     }
   }
