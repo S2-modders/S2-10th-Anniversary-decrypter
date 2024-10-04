@@ -528,15 +528,14 @@ size_t compress(uint8_t *uncompressed, size_t uncompressedSize,
   return myIdx;
 }
 
-void writeFile(filesystem::path path, vector<uint8_t> filecontents) {
+void writeFile(filesystem::path path, uint8_t *filecontents, size_t size) {
   ofstream outFile(path, ios::binary);
   if (!outFile.is_open()) {
     cerr << "Error: Could not open the file " << path << " for writing."
          << endl;
     return;
   }
-  outFile.write(reinterpret_cast<const char *>(filecontents.data()),
-                filecontents.size());
+  outFile.write(reinterpret_cast<const char *>(filecontents), size);
   if (outFile.fail()) {
     cerr << "Error: Failed to write to the file " << path << endl;
   }
@@ -586,7 +585,7 @@ vector<uint8_t> dec(vector<uint8_t> &filecontents, filesystem::path &path,
 
   vector<uint8_t> vecRes(result, result + expectedSize);
   if (write) {
-    writeFile(path, vecRes);
+    writeFile(path, result, expectedSize);
   }
 
   return vecRes;
@@ -630,7 +629,7 @@ vector<uint8_t> enc(vector<uint8_t> &filecontents, filesystem::path &path,
 
   vector<uint8_t> vecRes = std::vector(result, result + mySize + 20);
   if (write) {
-    writeFile(path, vecRes);
+    writeFile(path, result, mySize + 20);
   }
 
   return vecRes;
