@@ -1,20 +1,18 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
-#include <optional>
 
 using namespace std;
 
-enum Game { DNG, ADK };
+enum Game { NONE = 0, DNG, ADK };
 struct Header {
   uint32_t magic;
   uint32_t fcc;
   uint32_t fileCRC;
   uint32_t crc;
   uint32_t size;
-  optional<Game> getGame() {
-    return fcc == 0x6b646173 ? optional(ADK)
-                             : (fcc == 0x30306372 ? optional(DNG) : nullopt);
+  Game getGame() {
+    return fcc == 0x6b646173 ? ADK : (fcc == 0x30306372 ? DNG : NONE);
   }
 };
 struct Array {
@@ -150,6 +148,8 @@ void initKey(uint8_t (&key)[16], Game game) {
     key[13] = 0xe8;
     key[14] = 0xdb;
     key[15] = 0x6b;
+  case NONE:
+    break;
   }
 }
 
@@ -558,8 +558,8 @@ void writeFile(filesystem::path path, uint8_t *filecontents, size_t size) {
   outFile.close();
 }
 
-optional<Array> dec(uint8_t *filecontents, size_t size, filesystem::path &path,
-                    Game game, bool write) {
+Array dec(uint8_t *filecontents, size_t size, filesystem::path &path, Game game,
+          bool write) {
   string filename = path.filename().string();
   size_t cmp = filename.find(".cmp");
   filename = cmp == string::npos ? filename : filename.erase(cmp, 4);
@@ -574,7 +574,7 @@ optional<Array> dec(uint8_t *filecontents, size_t size, filesystem::path &path,
   if (crc != expectedCrc) {
     cerr << hex << "filename crc (" << crc << ") missmatch for file " << path
          << "! excpected: " << expectedCrc << endl;
-    return {};
+    return Array(0, 0);
   }
 
   decrypt(key, filecontents + 20, size - 20);
@@ -584,7 +584,7 @@ optional<Array> dec(uint8_t *filecontents, size_t size, filesystem::path &path,
 
   if (!success) {
     cerr << dec << "file size missmatch for file " << path << endl;
-    return nullopt;
+    return Array(0, 0);
   }
 
   crc = genCrc(result, expectedSize);
@@ -602,11 +602,11 @@ optional<Array> dec(uint8_t *filecontents, size_t size, filesystem::path &path,
     writeFile(path, result, expectedSize);
   }
 
-  return optional(Array(result, expectedSize));
+  return Array(result, expectedSize);
 }
 
-optional<Array> enc(uint8_t *filecontents, size_t size, filesystem::path &path,
-                    bool write) {
+Array enc(uint8_t *filecontents, size_t size, filesystem::path &path,
+          bool write) {
   string filename = path.filename().string();
   size_t adk = filename.find(".adk");
   size_t dng = filename.find(".dng");
@@ -614,7 +614,7 @@ optional<Array> enc(uint8_t *filecontents, size_t size, filesystem::path &path,
   filename = dng == string::npos ? filename : filename.erase(dng, 4);
   if (adk == dng || (dng != string::npos && adk != string::npos)) {
     cerr << "can't determine filetype for " << path << endl;
-    return nullopt;
+    return Array(0, 0);
   }
   uint8_t key[16];
   makeKey(key, filename,
@@ -643,7 +643,7 @@ optional<Array> enc(uint8_t *filecontents, size_t size, filesystem::path &path,
     writeFile(path, result, mySize + 20);
   }
 
-  return optional(Array(result, mySize + 20));
+  return Array(result, mySize + 20);
 }
 
 void processFile(filesystem::path path, bool test) {
@@ -658,7 +658,7 @@ void processFile(filesystem::path path, bool test) {
     if (size < sizeof(Header) || !header->getGame()) {
       enc(filecontents, size, path, true);
     } else {
-      dec(filecontents, size, path, header->getGame().value(), true);
+      dec(filecontents, size, path, header->getGame(), true);
     }
     return;
   }
@@ -666,22 +666,20 @@ void processFile(filesystem::path path, bool test) {
     return;
   if (!header->getGame())
     return;
-  optional<Array> res =
-      dec(filecontents, size, path, header->getGame().value(), false);
-  if (!res)
+  Array res = dec(filecontents, size, path, header->getGame(), false);
+  if (res.size == 0)
     return;
-  res = enc(res.value().data, res.value().size, path, false);
-  if (!res)
+  res = enc(res.data, res.size, path, false);
+  if (res.size == 0)
     return;
-  if (size > res.value().size) {
-    cout << "saved " << size - res.value().size << " bytes in " << path << endl;
+  if (size > res.size) {
+    cout << "saved " << size - res.size << " bytes in " << path << endl;
   }
-  if (size < res.value().size) {
-    cerr << "lost " << res.value().size - size
-         << " bytes in compression size in " << path << endl;
+  if (size < res.size) {
+    cerr << "lost " << res.size - size << " bytes in compression size in "
+         << path << endl;
   }
-  dec(res.value().data, res.value().size, path, header->getGame().value(),
-      false);
+  dec(res.data, res.size, path, header->getGame(), false);
 }
 
 int main(int argc, char *argv[]) {
