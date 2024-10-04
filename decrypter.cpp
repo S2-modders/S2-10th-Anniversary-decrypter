@@ -369,11 +369,11 @@ void search(uint32_t copybufferIdx)
   } while (true);
 }
 
-size_t compress(vector<uint8_t> uncompressed, uint8_t *compressed)
+size_t compress(uint8_t *uncompressed, size_t uncompressedSize,
+                uint8_t *compressed)
 
 {
   size_t myIdx = 0;
-  uint32_t SIZE = uncompressed.size();
   uint32_t DATA = 0;
   int copyBufferIndex;
   int i;
@@ -418,10 +418,10 @@ size_t compress(vector<uint8_t> uncompressed, uint8_t *compressed)
     myCopyBuffer = myCopyBuffer + 1;
   }
   do {
-    if (SIZE < 1)
+    if (uncompressedSize < 1)
       break;
-    currOpCode = uncompressed.at(DATA);
-    SIZE = SIZE + -1;
+    currOpCode = uncompressed[DATA];
+    uncompressedSize--;
     DATA = DATA + 1;
     copyBuffer[j + 0x3f0] = currOpCode;
     j = j + 1;
@@ -474,7 +474,7 @@ size_t compress(vector<uint8_t> uncompressed, uint8_t *compressed)
       j3 = j2;
       if (0 < (int)copyLen) {
         do {
-          if (SIZE < 1) {
+          if (uncompressedSize < 1) {
             j3 = j2;
             if (k < (int)currCopyLen) {
               copyBufferIndex = currCopyLen - k;
@@ -493,8 +493,8 @@ size_t compress(vector<uint8_t> uncompressed, uint8_t *compressed)
             }
             break;
           }
-          SIZE = SIZE + -1;
-          currOpCode = uncompressed.at(DATA);
+          uncompressedSize--;
+          currOpCode = uncompressed[DATA];
           DATA = DATA + 1;
           j = j2;
           update(nextCopyLen);
@@ -616,7 +616,8 @@ vector<uint8_t> enc(vector<uint8_t> &filecontents, filesystem::path &path,
   uint32_t size = filecontents.size();
 
   uint8_t *result = new uint8_t[20 + (filecontents.size() + 7) / 8 * 9];
-  size_t mySize = compress(filecontents, result + 20);
+  size_t mySize =
+      compress(filecontents.data(), filecontents.size(), result + 20);
   decrypt(key, result + 20, mySize);
   ((uint32_t *)result)[0] = magic;
   ((uint32_t *)result)[1] = fcc;
