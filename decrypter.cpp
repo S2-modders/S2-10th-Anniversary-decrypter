@@ -1,3 +1,4 @@
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -548,22 +549,7 @@ size_t compress(uint8_t *uncompressed, size_t uncompressedSize,
   return myIdx;
 }
 
-void writeFile(filesystem::path path, uint8_t *filecontents, size_t size) {
-  ofstream outFile(path, ios::binary);
-  if (!outFile.is_open()) {
-    cerr << "Error: Could not open the file " << path << " for writing."
-         << endl;
-    return;
-  }
-  outFile.write(reinterpret_cast<const char *>(filecontents), size);
-  if (outFile.fail()) {
-    cerr << "Error: Failed to write to the file " << path << endl;
-  }
-  outFile.close();
-}
-
-Array dec(uint8_t *filecontents, size_t size, filesystem::path &path,
-          bool write) {
+Array dec(uint8_t *filecontents, size_t size, filesystem::path &path) {
   string filename = path.filename().string();
   size_t cmp = filename.find(".cmp");
   filename = cmp == string::npos ? filename : filename.erase(cmp, 4);
@@ -601,15 +587,10 @@ Array dec(uint8_t *filecontents, size_t size, filesystem::path &path,
   path.replace_extension((header->getGame() == ADK ? ".adk" : ".dng") +
                          path.extension().string());
 
-  if (write) {
-    writeFile(path, result, header->size);
-  }
-
   return Array(result, header->size);
 }
 
-Array enc(uint8_t *filecontents, size_t size, filesystem::path &path,
-          bool write) {
+Array enc(uint8_t *filecontents, size_t size, filesystem::path &path) {
   string filename = path.filename().string();
   size_t adk = filename.find(".adk");
   size_t dng = filename.find(".dng");
@@ -637,11 +618,7 @@ Array enc(uint8_t *filecontents, size_t size, filesystem::path &path,
   path.replace_filename(filename);
   path.replace_extension(".cmp" + path.extension().string());
 
-  if (write) {
-    writeFile(path, result, mySize + 20);
-  }
-
-  return Array(result, mySize + 20);
+  return Array(result, mySize + sizeof(Header));
 }
 
 void processFile(filesystem::path path, bool test) {
@@ -653,21 +630,30 @@ void processFile(filesystem::path path, bool test) {
 
   Header *header = (Header *)filecontents;
   if (!test) {
-    if (size < sizeof(Header) || !header->getGame()) {
-      enc(filecontents, size, path, true);
-    } else {
-      dec(filecontents, size, path, true);
+    Array result = size < sizeof(Header) || !header->getGame()
+                       ? enc(filecontents, size, path)
+                       : dec(filecontents, size, path);
+    ofstream outFile(path, ios::binary);
+    if (!outFile.is_open()) {
+      cerr << "Error: Could not open the file " << path << " for writing."
+           << endl;
+      return;
     }
+    outFile.write(reinterpret_cast<const char *>(filecontents), size);
+    if (outFile.fail()) {
+      cerr << "Error: Failed to write to the file " << path << endl;
+    }
+    outFile.close();
     return;
   }
   if (size < sizeof(Header))
     return;
   if (!header->getGame())
     return;
-  Array res = dec(filecontents, size, path, false);
+  Array res = dec(filecontents, size, path);
   if (res.size == 0)
     return;
-  res = enc(res.data, res.size, path, false);
+  res = enc(res.data, res.size, path);
   if (res.size == 0)
     return;
   if (size > res.size) {
@@ -677,15 +663,14 @@ void processFile(filesystem::path path, bool test) {
     cerr << "lost " << res.size - size << " bytes in compression size in "
          << path << endl;
   }
-  dec(res.data, res.size, path, false);
+  dec(res.data, res.size, path);
 }
 
 int main(int argc, char *argv[]) {
   bool test = false;
   auto start = std::chrono::high_resolution_clock::now();
   for (int i = 1; i < argc; ++i) {
-    std::string arg = argv[i];
-    if (arg == "--test" || arg == "-t") {
+    if (strcmp(argv[i], "--test") == 0 || strcmp(argv[i], "-t") == 0) {
       test = true;
       continue;
     }
