@@ -15,6 +15,7 @@ struct Header {
     return fcc == 0x6b646173 ? ADK : (fcc == 0x30306372 ? DNG : NONE);
   }
 };
+
 struct Array {
   uint8_t *data;
   size_t size;
@@ -161,20 +162,23 @@ void randomizeKey(uint8_t (&key)[16], uint8_t *filenameLowerCase,
   }
 }
 
-void makeKey(uint8_t (&key)[16], string &filename, bool randomize, Game game) {
+void makeKey(uint8_t (&key)[16], string filename, bool randomize, Game game) {
   initKey(key, game);
   if (!randomize)
     return;
-  string lowercaseFilename = filename;
-  // This is enough for Settlers; files with ä don't work
-  for (char &c : lowercaseFilename) {
+  // This is enough for Settlers
+  size_t pos = filename.find("ä");
+  if (pos != std::string::npos) {
+    filename.replace(pos, 2, "\xe4");
+  }
+
+  for (char &c : filename) {
     if (c >= 'A' && c <= 'Z') {
       c = c + ('a' - 'A');
     }
   }
 
-  randomizeKey(key, (uint8_t *)lowercaseFilename.data(),
-               lowercaseFilename.size());
+  randomizeKey(key, (uint8_t *)filename.data(), filename.size());
 }
 
 void decrypt(uint8_t (&key)[16], uint8_t *data, size_t size) {
@@ -558,51 +562,50 @@ void writeFile(filesystem::path path, uint8_t *filecontents, size_t size) {
   outFile.close();
 }
 
-Array dec(uint8_t *filecontents, size_t size, filesystem::path &path, Game game,
+Array dec(uint8_t *filecontents, size_t size, filesystem::path &path,
           bool write) {
   string filename = path.filename().string();
   size_t cmp = filename.find(".cmp");
   filename = cmp == string::npos ? filename : filename.erase(cmp, 4);
 
+  Header *header = (Header *)filecontents;
   uint8_t key[16];
   makeKey(key, filename,
           path.extension().string() != ".s2m" &&
               path.extension().string() != ".sav",
-          game);
-  uint32_t crc = genCrc(key, 16);
-  uint32_t expectedCrc = ((uint32_t *)filecontents)[3];
-  if (crc != expectedCrc) {
+          header->getGame());
+  uint32_t crc = genCrc(key, sizeof(key));
+  if (crc != header->crc) {
     cerr << hex << "filename crc (" << crc << ") missmatch for file " << path
-         << "! excpected: " << expectedCrc << endl;
+         << "! excpected: " << header->crc << endl;
     return Array(0, 0);
   }
 
-  decrypt(key, filecontents + 20, size - 20);
-  uint32_t expectedSize = ((uint32_t *)filecontents)[4];
-  uint8_t *result = new uint8_t[expectedSize];
-  bool success = decopress(filecontents + 20, size - 20, result, expectedSize);
+  decrypt(key, filecontents + sizeof(Header), size - sizeof(Header));
+  uint8_t *result = new uint8_t[header->size];
+  bool success = decopress(filecontents + sizeof(Header), size - sizeof(Header),
+                           result, header->size);
 
   if (!success) {
     cerr << dec << "file size missmatch for file " << path << endl;
     return Array(0, 0);
   }
 
-  crc = genCrc(result, expectedSize);
-  expectedCrc = ((uint32_t *)filecontents)[2];
-  if (crc != expectedCrc) {
+  crc = genCrc(result, header->size);
+  if (crc != header->fileCRC) {
     cerr << hex << "filedata crc (" << crc << ") missmatch for file " << path
-         << "! excpected: " << expectedCrc << endl;
+         << "! excpected: " << header->fileCRC << endl;
   }
 
   path.replace_filename(filename);
-  path.replace_extension((game == ADK ? ".adk" : ".dng") +
+  path.replace_extension((header->getGame() == ADK ? ".adk" : ".dng") +
                          path.extension().string());
 
   if (write) {
-    writeFile(path, result, expectedSize);
+    writeFile(path, result, header->size);
   }
 
-  return Array(result, expectedSize);
+  return Array(result, header->size);
 }
 
 Array enc(uint8_t *filecontents, size_t size, filesystem::path &path,
@@ -622,20 +625,15 @@ Array enc(uint8_t *filecontents, size_t size, filesystem::path &path,
               path.extension().string() != ".sav",
           adk != string::npos ? ADK : DNG);
 
-  uint32_t magic = 0x06091812;
-  uint32_t fcc = (adk != string::npos) ? 0x6b646173 : 0x30306372;
-  uint32_t filecrc = genCrc(filecontents, size);
-  uint32_t crc = genCrc(key, sizeof(key));
-
-  uint8_t *result = new uint8_t[20 + (size + 7) / 8 + size];
+  uint8_t *result = new uint8_t[sizeof(Header) + (size + 7) / 8 + size];
+  Header *header = (Header *)result;
+  header->magic = 0x06091812;
+  header->fcc = (adk != string::npos) ? 0x6b646173 : 0x30306372;
+  header->fileCRC = genCrc(filecontents, size);
+  header->crc = genCrc(key, sizeof(key));
+  header->size = size;
   size_t mySize = compress(filecontents, size, result + 20);
-  decrypt(key, result + 20, mySize);
-  ((uint32_t *)result)[0] = magic;
-  ((uint32_t *)result)[1] = fcc;
-  ((uint32_t *)result)[2] = filecrc;
-  ((uint32_t *)result)[3] = crc;
-  ((uint32_t *)result)[4] = size;
-
+  decrypt(key, result + sizeof(Header), mySize);
   path.replace_filename(filename);
   path.replace_extension(".cmp" + path.extension().string());
 
@@ -658,7 +656,7 @@ void processFile(filesystem::path path, bool test) {
     if (size < sizeof(Header) || !header->getGame()) {
       enc(filecontents, size, path, true);
     } else {
-      dec(filecontents, size, path, header->getGame(), true);
+      dec(filecontents, size, path, true);
     }
     return;
   }
@@ -666,7 +664,7 @@ void processFile(filesystem::path path, bool test) {
     return;
   if (!header->getGame())
     return;
-  Array res = dec(filecontents, size, path, header->getGame(), false);
+  Array res = dec(filecontents, size, path, false);
   if (res.size == 0)
     return;
   res = enc(res.data, res.size, path, false);
@@ -679,7 +677,7 @@ void processFile(filesystem::path path, bool test) {
     cerr << "lost " << res.size - size << " bytes in compression size in "
          << path << endl;
   }
-  dec(res.data, res.size, path, header->getGame(), false);
+  dec(res.data, res.size, path, false);
 }
 
 int main(int argc, char *argv[]) {
