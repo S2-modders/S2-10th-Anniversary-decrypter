@@ -1,3 +1,4 @@
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -542,7 +543,7 @@ void writeFile(filesystem::path path, uint8_t *filecontents, size_t size) {
   outFile.close();
 }
 
-vector<uint8_t> dec(vector<uint8_t> &filecontents, filesystem::path &path,
+vector<uint8_t> dec(uint8_t *filecontents, size_t size, filesystem::path &path,
                     Game game, bool write) {
   string filename = path.filename().string();
   size_t cmp = filename.find(".cmp");
@@ -554,18 +555,17 @@ vector<uint8_t> dec(vector<uint8_t> &filecontents, filesystem::path &path,
               path.extension().string() != ".sav",
           game);
   uint32_t crc = genCrc(key, 16);
-  uint32_t expectedCrc = ((uint32_t *)filecontents.data())[3];
+  uint32_t expectedCrc = ((uint32_t *)filecontents)[3];
   if (crc != expectedCrc) {
     cerr << hex << "filename crc (" << crc << ") missmatch for file " << path
          << "! excpected: " << expectedCrc << endl;
     return {};
   }
 
-  vector<uint8_t> data(filecontents.begin() + 20, filecontents.end());
-  decrypt(key, data.data(), data.size());
-  uint32_t expectedSize = ((uint32_t *)filecontents.data())[4];
+  decrypt(key, filecontents + 20, size - 20);
+  uint32_t expectedSize = ((uint32_t *)filecontents)[4];
   uint8_t *result = new uint8_t[expectedSize];
-  bool success = decopress(data.data(), data.size(), result, expectedSize);
+  bool success = decopress(filecontents + 20, size - 20, result, expectedSize);
 
   if (!success) {
     cerr << dec << "file size missmatch for file " << path << endl;
@@ -573,7 +573,7 @@ vector<uint8_t> dec(vector<uint8_t> &filecontents, filesystem::path &path,
   }
 
   crc = genCrc(result, expectedSize);
-  expectedCrc = ((uint32_t *)filecontents.data())[2];
+  expectedCrc = ((uint32_t *)filecontents)[2];
   if (crc != expectedCrc) {
     cerr << hex << "filedata crc (" << crc << ") missmatch for file " << path
          << "! excpected: " << expectedCrc << endl;
@@ -667,8 +667,8 @@ int main(int argc, char *argv[]) {
                 !(fcc == 0x30306372 || fcc == 0x6b646173))
               continue;
             size_t cmpSize = filecontents.size();
-            filecontents = dec(filecontents, currPath,
-                               fcc == 0x6b646173 ? ADK : DNG, false);
+            filecontents = dec(filecontents.data(), filecontents.size(),
+                               currPath, fcc == 0x6b646173 ? ADK : DNG, false);
             if (filecontents.size() == 0)
               continue;
             filecontents = enc(filecontents, currPath, false);
@@ -680,8 +680,8 @@ int main(int argc, char *argv[]) {
               cerr << "lost " << filecontents.size() - cmpSize
                    << " uint8_ts in compression size in " << currPath << endl;
             }
-            filecontents = dec(filecontents, currPath,
-                               fcc == 0x6b646173 ? ADK : DNG, false);
+            filecontents = dec(filecontents.data(), filecontents.size(),
+                               currPath, fcc == 0x6b646173 ? ADK : DNG, false);
           }
         }
         continue;
@@ -691,8 +691,8 @@ int main(int argc, char *argv[]) {
       if (filecontents.size() < 20 || !(fcc == 0x30306372 || fcc == 0x6b646173))
         continue;
       size_t cmpSize = filecontents.size();
-      filecontents =
-          dec(filecontents, path, fcc == 0x6b646173 ? ADK : DNG, false);
+      filecontents = dec(filecontents.data(), filecontents.size(), path,
+                         fcc == 0x6b646173 ? ADK : DNG, false);
       if (filecontents.size() == 0)
         continue;
       filecontents = enc(filecontents, path, false);
@@ -704,8 +704,8 @@ int main(int argc, char *argv[]) {
         cerr << "lost " << filecontents.size() - cmpSize
              << " uint8_ts in compression size in " << path << endl;
       }
-      filecontents =
-          dec(filecontents, path, fcc == 0x6b646173 ? ADK : DNG, false);
+      filecontents = dec(filecontents.data(), filecontents.size(), path,
+                         fcc == 0x6b646173 ? ADK : DNG, false);
       continue;
     }
     if (is_directory(path)) {
@@ -716,7 +716,8 @@ int main(int argc, char *argv[]) {
           uint32_t fcc = ((uint32_t *)filecontents.data())[1];
           if (filecontents.size() >= 20 &&
               (fcc == 0x30306372 || fcc == 0x6b646173)) {
-            dec(filecontents, currPath, fcc == 0x6b646173 ? ADK : DNG, true);
+            dec(filecontents.data(), filecontents.size(), currPath,
+                fcc == 0x6b646173 ? ADK : DNG, true);
           } else {
             // enc(filecontents, currPath);
           }
@@ -727,7 +728,8 @@ int main(int argc, char *argv[]) {
       uint32_t fcc = ((uint32_t *)filecontents.data())[1];
       if (filecontents.size() >= 20 &&
           (fcc == 0x30306372 || fcc == 0x6b646173)) {
-        dec(filecontents, path, fcc == 0x6b646173 ? ADK : DNG, true);
+        dec(filecontents.data(), filecontents.size(), path,
+            fcc == 0x6b646173 ? ADK : DNG, true);
       } else {
         enc(filecontents, path, true);
       }
