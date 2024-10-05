@@ -43,7 +43,7 @@ uint32_t genCrc(uint8_t *data, size_t length) {
   uint32_t div = 0xffffffff;
   uint32_t *intData = (uint32_t *)data;
   for (; i + 32 < length; i += 32) {
-    div = div ^ intData[i / 4];
+    div ^= intData[i / 4];
     for (int j = 1; j < 8; j++) {
       div = rnum0[div >> 0x18] ^ rnum1[div >> 0x10 & 0xff] ^
             rnum2[div >> 8 & 0xff] ^ rnum3[div & 0xff] ^ intData[j + i / 4];
@@ -545,16 +545,17 @@ size_t compress(uint8_t *uncompressed, size_t uncompressedSize,
   return myIdx;
 }
 
+bool shouldRandomize(std::filesystem::path &path) {
+  return path.extension() != ".s2m" && path.extension() != ".sav";
+}
+
 bool dec(uint8_t *filecontents, size_t size, std::filesystem::path &path,
          uint8_t *result) {
   std::string filename = path.filename().string();
 
   Header *header = (Header *)filecontents;
   uint8_t key[16];
-  makeKey(key, filename,
-          path.extension().string() != ".s2m" &&
-              path.extension().string() != ".sav",
-          header->getGame());
+  makeKey(key, filename, shouldRandomize(path), header->getGame());
   uint32_t crc = genCrc(key, sizeof(key));
   if (crc != header->crc) {
     std::cerr << std::hex << "filename crc (" << crc << ") missmatch for file "
@@ -589,10 +590,7 @@ size_t enc(uint8_t *filecontents, size_t size, std::filesystem::path &path,
   std::string filename = path.filename().string();
 
   uint8_t key[16];
-  makeKey(key, filename,
-          path.extension().string() != ".s2m" &&
-              path.extension().string() != ".sav",
-          game);
+  makeKey(key, filename, shouldRandomize(path), game);
 
   Header *header = (Header *)result;
   header->magic = 0x06091812;
