@@ -3,8 +3,6 @@
 #include <fstream>
 #include <iostream>
 
-using namespace std;
-
 enum Game { NONE = 0, DNG, ADK };
 struct Header {
   uint32_t magic;
@@ -169,7 +167,8 @@ void randomizeKey(uint8_t (&key)[16], uint8_t *filenameLowerCase,
   }
 }
 
-void makeKey(uint8_t (&key)[16], string filename, bool randomize, Game game) {
+void makeKey(uint8_t (&key)[16], std::string filename, bool randomize,
+             Game game) {
   initKey(key, game);
   if (!randomize)
     return;
@@ -546,9 +545,9 @@ size_t compress(uint8_t *uncompressed, size_t uncompressedSize,
   return myIdx;
 }
 
-bool dec(uint8_t *filecontents, size_t size, filesystem::path &path,
+bool dec(uint8_t *filecontents, size_t size, std::filesystem::path &path,
          uint8_t *result) {
-  string filename = path.filename().string();
+  std::string filename = path.filename().string();
 
   Header *header = (Header *)filecontents;
   uint8_t key[16];
@@ -558,8 +557,8 @@ bool dec(uint8_t *filecontents, size_t size, filesystem::path &path,
           header->getGame());
   uint32_t crc = genCrc(key, sizeof(key));
   if (crc != header->crc) {
-    cerr << hex << "filename crc (" << crc << ") missmatch for file " << path
-         << "! excpected: " << header->crc << endl;
+    std::cerr << std::hex << "filename crc (" << crc << ") missmatch for file "
+              << path << "! excpected: " << header->crc << std::endl;
     return false;
   }
 
@@ -568,14 +567,14 @@ bool dec(uint8_t *filecontents, size_t size, filesystem::path &path,
                            result, header->size);
 
   if (!success) {
-    cerr << dec << "file size missmatch for file " << path << endl;
+    std::cerr << "file size missmatch for file " << path << std::endl;
     return false;
   }
 
   crc = genCrc(result, header->size);
   if (crc != header->fileCRC) {
-    cerr << hex << "filedata crc (" << crc << ") missmatch for file " << path
-         << "! excpected: " << header->fileCRC << endl;
+    std::cerr << std::hex << "filedata crc (" << crc << ") missmatch for file "
+              << path << "! excpected: " << header->fileCRC << std::endl;
     return false;
   }
 
@@ -585,9 +584,9 @@ bool dec(uint8_t *filecontents, size_t size, filesystem::path &path,
   return true;
 }
 
-size_t enc(uint8_t *filecontents, size_t size, filesystem::path &path,
+size_t enc(uint8_t *filecontents, size_t size, std::filesystem::path &path,
            Game game, uint8_t *result) {
-  string filename = path.filename().string();
+  std::string filename = path.filename().string();
 
   uint8_t key[16];
   makeKey(key, filename,
@@ -607,8 +606,8 @@ size_t enc(uint8_t *filecontents, size_t size, filesystem::path &path,
   return mySize + sizeof(Header);
 }
 
-void processFile(filesystem::path path, bool test) {
-  ifstream file(path, ios::binary);
+void processFile(std::filesystem::path path, bool test) {
+  std::ifstream file(path, std::ios::binary);
   size_t size = std::filesystem::file_size(path);
   uint8_t *filecontents = new uint8_t[size];
   file.read((char *)filecontents, size);
@@ -619,19 +618,20 @@ void processFile(filesystem::path path, bool test) {
     uint8_t *result;
     size_t resSize;
     if (size < sizeof(Header) || !header->getGame()) {
-      string filename = path.filename();
+      std::string filename = path.filename();
       size_t adk = filename.find(".adk");
       size_t dng = filename.find(".dng");
-      filename = adk == string::npos ? filename : filename.erase(adk, 4);
-      filename = dng == string::npos ? filename : filename.erase(dng, 4);
+      filename = adk == std::string::npos ? filename : filename.erase(adk, 4);
+      filename = dng == std::string::npos ? filename : filename.erase(dng, 4);
       path.replace_filename(filename);
-      if (adk == dng || (dng != string::npos && adk != string::npos)) {
-        cerr << "can't determine filetype for " << path << endl;
+      if (adk == dng ||
+          (dng != std::string::npos && adk != std::string::npos)) {
+        std::cerr << "can't determine filetype for " << path << std::endl;
         return;
       }
       result = new uint8_t[sizeof(Header) + (size + 7) / 8 + size];
-      resSize = enc(filecontents, size, path, adk != string::npos ? ADK : DNG,
-                    result);
+      resSize = enc(filecontents, size, path,
+                    adk != std::string::npos ? ADK : DNG, result);
     } else {
       result = new uint8_t[header->size];
       resSize = header->size;
@@ -644,16 +644,16 @@ void processFile(filesystem::path path, bool test) {
                              path.extension().string());
     }
     delete[] filecontents;
-    ofstream outFile(path, ios::binary);
+    std::ofstream outFile(path, std::ios::binary);
     if (!outFile.is_open()) {
-      cerr << "Error: Could not open the file " << path << " for writing."
-           << endl;
+      std::cerr << "Error: Could not open the file " << path << " for writing."
+                << std::endl;
       delete[] result;
       return;
     }
     outFile.write((char *)result, resSize);
     if (outFile.fail()) {
-      cerr << "Error: Failed to write to the file " << path << endl;
+      std::cerr << "Error: Failed to write to the file " << path << std::endl;
     }
     outFile.close();
     delete[] result;
@@ -672,11 +672,12 @@ void processFile(filesystem::path path, bool test) {
   size_t encSize = enc(result, header->size, path, header->getGame(), encRes);
   delete[] result;
   if (size > encSize) {
-    cout << "saved " << size - encSize << " bytes in " << path << endl;
+    std::cout << "saved " << size - encSize << " bytes in " << path
+              << std::endl;
   }
   if (size < encSize) {
-    cerr << "lost " << encSize - size << " bytes in compression size in "
-         << path << endl;
+    std::cerr << "lost " << encSize - size << " bytes in compression size in "
+              << path << std::endl;
   }
   result = new uint8_t[header->size];
   dec(encRes, encSize, path, result);
@@ -693,9 +694,10 @@ int main(int argc, char *argv[]) {
       test = true;
       continue;
     }
-    filesystem::path path(argv[i]);
+    std::filesystem::path path(argv[i]);
     if (is_directory(path)) {
-      for (const auto entry : filesystem::recursive_directory_iterator(path)) {
+      for (const auto entry :
+           std::filesystem::recursive_directory_iterator(path)) {
         if (entry.is_regular_file()) {
           processFile(entry.path(), test);
         }
@@ -708,7 +710,7 @@ int main(int argc, char *argv[]) {
   auto end = std::chrono::high_resolution_clock::now();
   std::chrono::duration<double, std::milli> duration = end - start;
 
-  cout << "Allocs: " << allocs << endl;
+  std::cout << "Allocs: " << allocs << std::endl;
   std::cout << "Execution time: " << duration.count() << " ms" << std::endl;
   return 0;
 }
