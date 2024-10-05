@@ -280,25 +280,17 @@ void update(uint32_t copyLen) {
   return;
 }
 
-void search(uint32_t copybufferIdx)
-
-{
-  int diff;
-  uint32_t currCopyOffest;
-  int currCopyLen;
-  uint32_t currIdx;
-  int lastCopyLen;
-  uint8_t curr;
-  uint32_t *tmp;
-
-  curr = copyBuffer[copybufferIdx];
-  diff = 1;
+void search(uint32_t copybufferIdx) {
+  uint8_t curr = copyBuffer[copybufferIdx];
+  int diff = 1;
   cbi1[copybufferIdx] = 0x400;
   cbi0[copybufferIdx] = 0x400;
   copyLen = 0;
-  currIdx = curr + 0x401;
-  lastCopyLen = 0;
+  uint32_t currIdx = curr + 0x401;
+  uint32_t lastCopyLen = 0;
+
   do {
+    uint32_t currCopyOffest;
     if (diff < 0) {
       currCopyOffest = cbi1[currIdx];
       if (currCopyOffest == 0x400) {
@@ -314,64 +306,30 @@ void search(uint32_t copybufferIdx)
         return;
       }
     }
-    currCopyLen = 1;
-    do {
+    uint32_t currCopyLen = 1;
+    for (; currCopyLen < 16; currCopyLen++) {
       diff = copyBuffer[copybufferIdx + currCopyLen] -
              copyBuffer[currCopyLen + currCopyOffest];
       if (diff != 0)
         break;
-      diff = (uint32_t) *
-                 (uint8_t *)(currCopyLen + copyBuffer + 1 + copybufferIdx) -
-             (uint32_t) *
-                 (uint8_t *)(currCopyLen + copyBuffer + 1 + currCopyOffest);
-      if (diff != 0) {
-        currCopyLen = currCopyLen + 1;
-        break;
-      }
-      diff = (uint32_t) *
-                 (uint8_t *)(currCopyLen + copyBuffer + 2 + copybufferIdx) -
-             (uint32_t) *
-                 (uint8_t *)(currCopyLen + copyBuffer + 2 + currCopyOffest);
-      if (diff != 0) {
-        currCopyLen = currCopyLen + 2;
-        break;
-      }
-      diff = (uint32_t) *
-                 (uint8_t *)(currCopyLen + copyBuffer + 3 + copybufferIdx) -
-             (uint32_t) *
-                 (uint8_t *)(currCopyLen + copyBuffer + 3 + currCopyOffest);
-      if (diff != 0) {
-        currCopyLen = currCopyLen + 3;
-        break;
-      }
-      diff = (uint32_t) *
-                 (uint8_t *)(currCopyLen + copyBuffer + 4 + copybufferIdx) -
-             (uint32_t) *
-                 (uint8_t *)(currCopyLen + copyBuffer + 4 + currCopyOffest);
-      if (diff != 0) {
-        currCopyLen = currCopyLen + 4;
-        break;
-      }
-      currCopyLen = currCopyLen + 5;
-    } while (currCopyLen < 0x10);
+    }
     currIdx = currCopyOffest;
     if ((lastCopyLen < currCopyLen) &&
         (lastCopyLen = currCopyLen, copyLen = currCopyLen,
          copyOffset = currCopyOffest, 0xf < currCopyLen)) {
       dataBuffer[copybufferIdx] = dataBuffer[currCopyOffest];
-      tmp = dataBuffer + currCopyOffest;
       cbi1[copybufferIdx] = cbi1[currCopyOffest];
       cbi0[copybufferIdx] = cbi0[currCopyOffest];
       dataBuffer[cbi1[currCopyOffest]] = copybufferIdx;
       dataBuffer[cbi0[currCopyOffest]] = copybufferIdx;
-      currIdx = *tmp;
+      currIdx = dataBuffer[currCopyOffest];
       if (cbi0[currIdx] != currCopyOffest) {
         cbi1[currIdx] = copybufferIdx;
-        *tmp = 0x400;
+        dataBuffer[currCopyOffest] = 0x400;
         return;
       }
       cbi0[currIdx] = copybufferIdx;
-      *tmp = 0x400;
+      dataBuffer[currCopyOffest] = 0x400;
       return;
     }
   } while (true);
