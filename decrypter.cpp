@@ -201,39 +201,30 @@ void decrypt(uint8_t (&key)[16], uint8_t *data, size_t size) {
   }
 }
 
-bool decopress(uint8_t *compressed, size_t compressedSize,
-               uint8_t *decompressed, size_t size) {
+bool decopress(uint8_t *cmp, size_t cmpSize, uint8_t *decmp, size_t decmpSize) {
   size_t idx = 0;
-  uint8_t copyBuffer[0x400];
-  fill(begin(copyBuffer), end(copyBuffer), (uint8_t)0x20);
-  uint32_t copyBufferIdx = 0x3f0;
   uint32_t mode = 0;
-  for (uint32_t i = 0; i < compressedSize; i++) {
-    uint8_t curr = compressed[i];
+  for (uint32_t i = 0; i < cmpSize; i++) {
+    uint8_t curr = cmp[i];
     if ((mode & 0x100) == 0) {
       mode = curr | 0xff00;
     } else {
       if ((mode & 1) == 1) {
-        if (idx == size)
+        if (idx == decmpSize)
           return false;
-        decompressed[idx++] = curr;
-        copyBuffer[copyBufferIdx++] = curr;
-        copyBufferIdx &= 0x3ff;
-      } else if (++i < compressedSize) {
-        uint32_t num = curr | (compressed[i] & 0xf0) << 4;
-        for (int j = 0; j < (compressed[i] & 0xf) + 3; j++) {
-          uint8_t copied = copyBuffer[(j + num) & 0x3ff];
-          if (idx == size)
+        decmp[idx++] = curr;
+      } else if (++i < cmpSize) {
+        uint32_t cp = (16 - idx + curr + ((cmp[i] & 0xf0) << 4)) & 0x3ff;
+        for (int j = 0; j < (cmp[i] & 0xf) + 3; j++) {
+          if (idx == decmpSize)
             return false;
-          decompressed[idx++] = copied;
-          copyBuffer[copyBufferIdx++] = copied;
-          copyBufferIdx &= 0x3ff;
+          decmp[idx++] = cp + idx < 1024 ? ' ' : decmp[cp + idx - 1024];
         }
       }
       mode >>= 1;
     }
   }
-  return idx == size;
+  return idx == decmpSize;
 }
 
 // TODO: there is some undef behavior, which prevents code optimization
@@ -663,7 +654,7 @@ void processFile(filesystem::path path, bool test) {
     cerr << "lost " << res.size - size << " bytes in compression size in "
          << path << endl;
   }
-  dec(res.data, res.size, path);
+  res = dec(res.data, res.size, path);
 }
 
 int main(int argc, char *argv[]) {
