@@ -233,59 +233,50 @@ bool decopress(uint8_t *cmp, size_t cmpSize, uint8_t *decmp, size_t decmpSize) {
 }
 
 // TODO: there is some undef behavior, which prevents code optimization
-uint32_t dataBuffer1[1026];
-uint32_t copyBufferInt2[1281];
+uint32_t dataBuffer[1026];
+uint32_t cbi0[1281];
 uint32_t copyOffset;
-uint32_t copyBufferInt[1025];
+uint32_t cbi1[1025];
 uint8_t copyBuffer[1024];
 uint8_t idksometing[16];
 uint32_t idx;
 uint32_t cbiSum;
 uint32_t copyLen;
+void update(uint32_t copyLen) {
 
-void update(uint32_t copyLen)
-
-{
-  uint32_t curr;
-  uint32_t myCurr;
-  uint32_t *tmp;
-  uint32_t tmp2;
-  uint32_t tmp3;
-
-  tmp = dataBuffer1 + copyLen;
-  if (dataBuffer1[copyLen] != 0x400) {
-    curr = copyBufferInt2[copyLen];
-    if (curr == 0x400) {
-      curr = copyBufferInt[copyLen];
-    } else {
-      myCurr = copyBufferInt[copyLen];
-      if (myCurr != 0x400) {
-        curr = myCurr;
-        if (copyBufferInt2[myCurr] != 0x400) {
-          do {
-            curr = copyBufferInt2[curr];
-          } while (copyBufferInt2[curr] != 0x400);
-          tmp2 = dataBuffer1[curr];
-          tmp3 = copyBufferInt[curr];
-          dataBuffer1[tmp3] = tmp2;
-          copyBufferInt2[tmp2] = tmp3;
-          copyBufferInt[curr] = myCurr;
-          dataBuffer1[copyBufferInt[copyLen]] = curr;
-        }
-        copyBufferInt2[curr] = copyBufferInt2[copyLen];
-        dataBuffer1[copyBufferInt2[copyLen]] = curr;
+  if (dataBuffer[copyLen] == 0x400)
+    return;
+  uint32_t curr = cbi0[copyLen];
+  if (curr == 0x400) {
+    curr = cbi1[copyLen];
+  } else {
+    uint32_t myCurr = cbi1[copyLen];
+    if (myCurr != 0x400) {
+      curr = myCurr;
+      if (cbi0[myCurr] != 0x400) {
+        do {
+          curr = cbi0[curr];
+        } while (cbi0[curr] != 0x400);
+        uint32_t tmp = dataBuffer[curr];
+        uint32_t tmp1 = cbi1[curr];
+        dataBuffer[tmp1] = tmp;
+        cbi0[tmp] = tmp1;
+        cbi1[curr] = myCurr;
+        dataBuffer[cbi1[copyLen]] = curr;
       }
+      cbi0[curr] = cbi0[copyLen];
+      dataBuffer[cbi0[copyLen]] = curr;
     }
-    dataBuffer1[curr] = *tmp;
-    myCurr = *tmp;
-    if (copyBufferInt2[myCurr] == copyLen) {
-      *tmp = 0x400;
-      copyBufferInt2[myCurr] = curr;
-      return;
-    }
-    copyBufferInt[myCurr] = curr;
-    *tmp = 0x400;
   }
+  dataBuffer[curr] = dataBuffer[copyLen];
+  uint32_t tmp = dataBuffer[copyLen];
+  if (cbi0[tmp] == copyLen) {
+    dataBuffer[copyLen] = 0x400;
+    cbi0[tmp] = curr;
+    return;
+  }
+  cbi1[tmp] = curr;
+  dataBuffer[copyLen] = 0x400;
   return;
 }
 
@@ -302,24 +293,24 @@ void search(uint32_t copybufferIdx)
 
   curr = copyBuffer[copybufferIdx];
   diff = 1;
-  copyBufferInt[copybufferIdx] = 0x400;
-  copyBufferInt2[copybufferIdx] = 0x400;
+  cbi1[copybufferIdx] = 0x400;
+  cbi0[copybufferIdx] = 0x400;
   copyLen = 0;
   currIdx = curr + 0x401;
   lastCopyLen = 0;
   do {
     if (diff < 0) {
-      currCopyOffest = copyBufferInt[currIdx];
+      currCopyOffest = cbi1[currIdx];
       if (currCopyOffest == 0x400) {
-        copyBufferInt[currIdx] = copybufferIdx;
-        dataBuffer1[copybufferIdx] = currIdx;
+        cbi1[currIdx] = copybufferIdx;
+        dataBuffer[copybufferIdx] = currIdx;
         return;
       }
     } else {
-      currCopyOffest = copyBufferInt2[currIdx];
+      currCopyOffest = cbi0[currIdx];
       if (currCopyOffest == 0x400) {
-        copyBufferInt2[currIdx] = copybufferIdx;
-        dataBuffer1[copybufferIdx] = currIdx;
+        cbi0[currIdx] = copybufferIdx;
+        dataBuffer[copybufferIdx] = currIdx;
         return;
       }
     }
@@ -367,19 +358,19 @@ void search(uint32_t copybufferIdx)
     if ((lastCopyLen < currCopyLen) &&
         (lastCopyLen = currCopyLen, copyLen = currCopyLen,
          copyOffset = currCopyOffest, 0xf < currCopyLen)) {
-      dataBuffer1[copybufferIdx] = dataBuffer1[currCopyOffest];
-      tmp = dataBuffer1 + currCopyOffest;
-      copyBufferInt[copybufferIdx] = copyBufferInt[currCopyOffest];
-      copyBufferInt2[copybufferIdx] = copyBufferInt2[currCopyOffest];
-      dataBuffer1[copyBufferInt[currCopyOffest]] = copybufferIdx;
-      dataBuffer1[copyBufferInt2[currCopyOffest]] = copybufferIdx;
+      dataBuffer[copybufferIdx] = dataBuffer[currCopyOffest];
+      tmp = dataBuffer + currCopyOffest;
+      cbi1[copybufferIdx] = cbi1[currCopyOffest];
+      cbi0[copybufferIdx] = cbi0[currCopyOffest];
+      dataBuffer[cbi1[currCopyOffest]] = copybufferIdx;
+      dataBuffer[cbi0[currCopyOffest]] = copybufferIdx;
       currIdx = *tmp;
-      if (copyBufferInt2[currIdx] != currCopyOffest) {
-        copyBufferInt[currIdx] = copybufferIdx;
+      if (cbi0[currIdx] != currCopyOffest) {
+        cbi1[currIdx] = copybufferIdx;
         *tmp = 0x400;
         return;
       }
-      copyBufferInt2[currIdx] = copybufferIdx;
+      cbi0[currIdx] = copybufferIdx;
       *tmp = 0x400;
       return;
     }
@@ -412,13 +403,13 @@ size_t compress(uint8_t *uncompressed, size_t uncompressedSize,
   void *start;
   uint8_t *tmp;
 
-  myDataBuffer0 = copyBufferInt2 + 0x401;
+  myDataBuffer0 = cbi0 + 0x401;
   for (copyBufferIndex = 0x100; copyBufferIndex != 0;
        copyBufferIndex = copyBufferIndex + -1) {
     *myDataBuffer0 = 0x400;
     myDataBuffer0 = myDataBuffer0 + 1;
   }
-  myDataBuffer1 = dataBuffer1;
+  myDataBuffer1 = dataBuffer;
   for (copyBufferIndex = 0x400; copyBufferIndex != 0;
        copyBufferIndex = copyBufferIndex + -1) {
     *myDataBuffer1 = 0x400;
