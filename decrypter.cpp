@@ -15,12 +15,18 @@ struct Header {
   Game getGame() {
     return fcc == 0x6b646173 ? ADK : (fcc == 0x30306372 ? DNG : NONE);
   }
-};
-
-struct Array {
-  uint8_t *data;
-  size_t size;
-  Array(uint8_t *ptr, size_t s) : data(ptr), size(s) {}
+  void setGame(Game game) {
+    switch (game) {
+    case NONE:
+      fcc = 0;
+      break;
+    case DNG:
+      fcc = 0x30306372;
+      break;
+    case ADK:
+      fcc = 0x6b646173;
+    }
+  }
 };
 
 size_t allocs = 0;
@@ -540,10 +546,9 @@ size_t compress(uint8_t *uncompressed, size_t uncompressedSize,
   return myIdx;
 }
 
-Array dec(uint8_t *filecontents, size_t size, filesystem::path &path) {
+bool dec(uint8_t *filecontents, size_t size, filesystem::path &path,
+         uint8_t *result) {
   string filename = path.filename().string();
-  size_t cmp = filename.find(".cmp");
-  filename = cmp == string::npos ? filename : filename.erase(cmp, 4);
 
   Header *header = (Header *)filecontents;
   uint8_t key[16];
@@ -555,61 +560,51 @@ Array dec(uint8_t *filecontents, size_t size, filesystem::path &path) {
   if (crc != header->crc) {
     cerr << hex << "filename crc (" << crc << ") missmatch for file " << path
          << "! excpected: " << header->crc << endl;
-    return Array(0, 0);
+    return false;
   }
 
   decrypt(key, filecontents + sizeof(Header), size - sizeof(Header));
-  uint8_t *result = new uint8_t[header->size];
   bool success = decopress(filecontents + sizeof(Header), size - sizeof(Header),
                            result, header->size);
 
   if (!success) {
     cerr << dec << "file size missmatch for file " << path << endl;
-    return Array(0, 0);
+    return false;
   }
 
   crc = genCrc(result, header->size);
   if (crc != header->fileCRC) {
     cerr << hex << "filedata crc (" << crc << ") missmatch for file " << path
          << "! excpected: " << header->fileCRC << endl;
+    return false;
   }
 
-  path.replace_filename(filename);
   path.replace_extension((header->getGame() == ADK ? ".adk" : ".dng") +
                          path.extension().string());
 
-  return Array(result, header->size);
+  return true;
 }
 
-Array enc(uint8_t *filecontents, size_t size, filesystem::path &path) {
+size_t enc(uint8_t *filecontents, size_t size, filesystem::path &path,
+           Game game, uint8_t *result) {
   string filename = path.filename().string();
-  size_t adk = filename.find(".adk");
-  size_t dng = filename.find(".dng");
-  filename = adk == string::npos ? filename : filename.erase(adk, 4);
-  filename = dng == string::npos ? filename : filename.erase(dng, 4);
-  if (adk == dng || (dng != string::npos && adk != string::npos)) {
-    cerr << "can't determine filetype for " << path << endl;
-    return Array(0, 0);
-  }
+
   uint8_t key[16];
   makeKey(key, filename,
           path.extension().string() != ".s2m" &&
               path.extension().string() != ".sav",
-          adk != string::npos ? ADK : DNG);
+          game);
 
-  uint8_t *result = new uint8_t[sizeof(Header) + (size + 7) / 8 + size];
   Header *header = (Header *)result;
   header->magic = 0x06091812;
-  header->fcc = (adk != string::npos) ? 0x6b646173 : 0x30306372;
+  header->setGame(game);
   header->fileCRC = genCrc(filecontents, size);
   header->crc = genCrc(key, sizeof(key));
   header->size = size;
-  size_t mySize = compress(filecontents, size, result + 20);
+  size_t mySize = compress(filecontents, size, result + sizeof(Header));
   decrypt(key, result + sizeof(Header), mySize);
-  path.replace_filename(filename);
-  path.replace_extension(".cmp" + path.extension().string());
 
-  return Array(result, mySize + sizeof(Header));
+  return mySize + sizeof(Header);
 }
 
 void processFile(filesystem::path path, bool test) {
@@ -621,40 +616,73 @@ void processFile(filesystem::path path, bool test) {
 
   Header *header = (Header *)filecontents;
   if (!test) {
-    Array result = size < sizeof(Header) || !header->getGame()
-                       ? enc(filecontents, size, path)
-                       : dec(filecontents, size, path);
+    uint8_t *result;
+    size_t resSize;
+    if (size < sizeof(Header) || !header->getGame()) {
+      string filename = path.filename();
+      size_t adk = filename.find(".adk");
+      size_t dng = filename.find(".dng");
+      filename = adk == string::npos ? filename : filename.erase(adk, 4);
+      filename = dng == string::npos ? filename : filename.erase(dng, 4);
+      path.replace_filename(filename);
+      if (adk == dng || (dng != string::npos && adk != string::npos)) {
+        cerr << "can't determine filetype for " << path << endl;
+        return;
+      }
+      result = new uint8_t[sizeof(Header) + (size + 7) / 8 + size];
+      resSize = enc(filecontents, size, path, adk != string::npos ? ADK : DNG,
+                    result);
+    } else {
+      result = new uint8_t[header->size];
+      resSize = header->size;
+      if (!dec(filecontents, size, path, result)) {
+        delete[] result;
+        delete[] filecontents;
+        return;
+      }
+      path.replace_extension((header->getGame() == ADK ? ".adk" : ".dng") +
+                             path.extension().string());
+    }
+    delete[] filecontents;
     ofstream outFile(path, ios::binary);
     if (!outFile.is_open()) {
       cerr << "Error: Could not open the file " << path << " for writing."
            << endl;
+      delete[] result;
       return;
     }
-    outFile.write(reinterpret_cast<const char *>(filecontents), size);
+    outFile.write((char *)result, resSize);
     if (outFile.fail()) {
       cerr << "Error: Failed to write to the file " << path << endl;
     }
     outFile.close();
+    delete[] result;
     return;
   }
-  if (size < sizeof(Header))
+  if (size < sizeof(Header) || !header->getGame())
     return;
-  if (!header->getGame())
+  uint8_t *result;
+  result = new uint8_t[header->size];
+  if (!dec(filecontents, size, path, result)) {
+    delete[] result;
+    delete[] filecontents;
     return;
-  Array res = dec(filecontents, size, path);
-  if (res.size == 0)
-    return;
-  res = enc(res.data, res.size, path);
-  if (res.size == 0)
-    return;
-  if (size > res.size) {
-    cout << "saved " << size - res.size << " bytes in " << path << endl;
   }
-  if (size < res.size) {
-    cerr << "lost " << res.size - size << " bytes in compression size in "
+  uint8_t *encRes = new uint8_t[sizeof(Header) + (size + 7) / 8 + size];
+  size_t encSize = enc(result, header->size, path, header->getGame(), encRes);
+  delete[] result;
+  if (size > encSize) {
+    cout << "saved " << size - encSize << " bytes in " << path << endl;
+  }
+  if (size < encSize) {
+    cerr << "lost " << encSize - size << " bytes in compression size in "
          << path << endl;
   }
-  res = dec(res.data, res.size, path);
+  result = new uint8_t[header->size];
+  dec(encRes, encSize, path, result);
+  delete[] encRes;
+  delete[] result;
+  delete[] filecontents;
 }
 
 int main(int argc, char *argv[]) {
