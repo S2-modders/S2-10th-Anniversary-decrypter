@@ -236,7 +236,7 @@ uint32_t dataBuffer[1026];
 uint32_t cbi0[1281];
 uint32_t copyOffset;
 uint32_t cbi1[1025];
-uint8_t copyBuffer[1024 + 16];
+uint8_t copyBuffer[1024];
 uint32_t copyLen;
 
 void init(uint32_t idx) {
@@ -276,7 +276,8 @@ void search(uint32_t copybufferIdx) {
   cbi0[copybufferIdx] = 0x400;
   copyLen = 0;
   uint32_t currIdx = curr + 0x401;
-  do {
+  while (true) {
+
     uint32_t currCopyOffest;
     if (diff < 0) {
       currCopyOffest = cbi1[currIdx];
@@ -293,13 +294,15 @@ void search(uint32_t copybufferIdx) {
         return;
       }
     }
+
     uint32_t currCopyLen = 1;
     for (; currCopyLen < 16; currCopyLen++) {
-      diff = copyBuffer[copybufferIdx + currCopyLen] -
-             copyBuffer[currCopyOffest + currCopyLen];
+      diff = copyBuffer[copybufferIdx + currCopyLen & 0x3ff] -
+             copyBuffer[currCopyOffest + currCopyLen & 0x3ff];
       if (diff != 0)
         break;
     }
+
     currIdx = currCopyOffest;
     if ((copyLen < currCopyLen) &&
         (copyLen = currCopyLen, copyOffset = currCopyOffest,
@@ -318,16 +321,15 @@ void search(uint32_t copybufferIdx) {
       dataBuffer[currCopyOffest] = 0x400;
       return;
     }
-  } while (true);
+  }
 }
 
 size_t compress(uint8_t *uncompressed, size_t uncompressedSize,
                 uint8_t *compressed) {
   size_t myIdx = 0;
   uint32_t idx = 0;
-  uint8_t dataCopyBuffer[20];
-  dataCopyBuffer[0] = 0;
-  uint8_t opCode = 1;
+  size_t opIdx = 0;
+  uint8_t opCode = 0;
   uint32_t copyBufferIdx = 0x3f0;
   std::fill(std::begin(cbi0) + 0x401, std::end(cbi0), 0x400);
   std::fill(std::begin(dataBuffer), std::end(dataBuffer), 0x400);
@@ -343,35 +345,28 @@ size_t compress(uint8_t *uncompressed, size_t uncompressedSize,
   }
 
   uint32_t nextCopyLen = 0;
-  uint32_t dataCopyIdx = 1;
   while (0 < j) {
     if (j < copyLen) {
       copyLen = j;
     }
 
-    if (copyLen < 3) {
-      dataCopyBuffer[0] |= opCode;
-      copyLen = 1;
-      dataCopyBuffer[dataCopyIdx++] = copyBuffer[copyBufferIdx];
-    } else {
-      dataCopyBuffer[dataCopyIdx++] = copyOffset;
-      dataCopyBuffer[dataCopyIdx++] = copyOffset >> 4 & 0xf0 | copyLen - 3;
-    }
-
     opCode <<= 1;
     if (!opCode) {
-      for (size_t i = 0; i < dataCopyIdx; i++) {
-        compressed[myIdx++] = dataCopyBuffer[i];
-      }
-      dataCopyBuffer[0] = 0;
+      compressed[opIdx = myIdx++] = 0;
       opCode = 1;
-      dataCopyIdx = 1;
+    }
+    if (copyLen < 3) {
+      copyLen = 1;
+      compressed[opIdx] |= opCode;
+      compressed[myIdx++] = copyBuffer[copyBufferIdx];
+    } else {
+      compressed[myIdx++] = copyOffset;
+      compressed[myIdx++] = copyOffset >> 4 & 0xf0 | copyLen - 3;
     }
 
-    uint32_t currCopyLen = copyLen;
-    for (uint32_t i = 0; i < currCopyLen; i++) {
+    for (uint8_t i = copyLen; i > 0; i--) {
       if (uncompressedSize == idx) {
-        for (uint32_t k = 0; k < currCopyLen - i; k++) {
+        for (; i > 0; i--) {
           init(nextCopyLen);
           nextCopyLen = nextCopyLen + 1 & 0x3ff;
           copyBufferIdx = copyBufferIdx + 1 & 0x3ff;
@@ -383,20 +378,12 @@ size_t compress(uint8_t *uncompressed, size_t uncompressedSize,
       }
 
       init(nextCopyLen);
-      if (nextCopyLen < 0xf) {
-        copyBuffer[0x400 + nextCopyLen] = uncompressed[idx];
-      }
       copyBuffer[nextCopyLen] = uncompressed[idx++];
       nextCopyLen = nextCopyLen + 1 & 0x3ff;
       copyBufferIdx = copyBufferIdx + 1 & 0x3ff;
       search(copyBufferIdx);
     }
   }
-
-  if (dataCopyIdx > 1)
-    for (uint32_t i = 0; i < dataCopyIdx; i++) {
-      compressed[myIdx++] = dataCopyBuffer[i];
-    }
   return myIdx;
 }
 
@@ -482,7 +469,7 @@ void processFile(std::filesystem::path path, bool test) {
         std::cerr << "can't determine filetype for " << path << std::endl;
         return;
       }
-      result = new uint8_t[sizeof(Header) + (size + 7) / 8 + size];
+      result = new uint8_t[sizeof(Header) + size / 8 + 1 + size];
       resSize = enc(filecontents, size, path,
                     adk != std::string::npos ? ADK : DNG, result);
     } else {
@@ -521,7 +508,7 @@ void processFile(std::filesystem::path path, bool test) {
     delete[] filecontents;
     return;
   }
-  uint8_t *encRes = new uint8_t[sizeof(Header) + (size + 7) / 8 + size];
+  uint8_t *encRes = new uint8_t[sizeof(Header) + size / 8 + 1 + size];
   size_t encSize = enc(result, header->size, path, header->getGame(), encRes);
   delete[] result;
   if (size > encSize) {
