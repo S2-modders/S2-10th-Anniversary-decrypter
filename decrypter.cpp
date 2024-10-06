@@ -1,3 +1,4 @@
+#include <cstdint>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -219,7 +220,8 @@ void decrypt(uint8_t (&key)[16], uint8_t *data, size_t size) {
   }
 }
 
-bool decopress(uint8_t *cmp, size_t cmpSize, uint8_t *decmp, size_t decmpSize) {
+bool decompress(uint8_t *cmp, size_t cmpSize, uint8_t *decmp,
+                size_t decmpSize) {
   size_t idx = 0;
   uint32_t mode = 0;
   for (uint32_t i = 0; i < cmpSize; i++) {
@@ -233,7 +235,7 @@ bool decopress(uint8_t *cmp, size_t cmpSize, uint8_t *decmp, size_t decmpSize) {
         decmp[idx++] = curr;
       } else if (++i < cmpSize) {
         uint32_t cp = (16 - idx + curr + ((cmp[i] & 0xf0) << 4)) & 0x3ff;
-        for (uint32_t j = 0; j < (cmp[i] & 0xf) + 3; j++) {
+        for (uint8_t j = 0; j < (cmp[i] & 0xf) + 3; j++) {
           if (idx == decmpSize)
             return false;
           decmp[idx++] = cp + idx < 1024 ? ' ' : decmp[cp + idx - 1024];
@@ -418,8 +420,8 @@ bool dec(EncryptedFile *encryptedFile, size_t size, std::filesystem::path &path,
 
   decrypt(key, encryptedFile->body, size - encryptedFile->getHeaderSize());
   bool success =
-      decopress(encryptedFile->body, size - encryptedFile->getHeaderSize(),
-                result, encryptedFile->uncopressedSize);
+      decompress(encryptedFile->body, size - encryptedFile->getHeaderSize(),
+                 result, encryptedFile->uncopressedSize);
 
   if (!success) {
     std::cerr << "file size missmatch in " << path << std::endl;
@@ -467,7 +469,7 @@ void processFile(std::filesystem::path path, bool test) {
     uint8_t *result;
     size_t resSize;
     if (!EncryptedFile::isEncryptedFile(filecontents, size)) {
-      std::string filename = path.filename();
+      std::string filename = path.filename().string();
       size_t adk = filename.find(".adk");
       size_t dng = filename.find(".dng");
       filename = adk == std::string::npos ? filename : filename.erase(adk, 4);
@@ -547,8 +549,7 @@ int main(int argc, char *argv[]) {
     }
     std::filesystem::path path(argv[i]);
     if (is_directory(path)) {
-      for (const auto entry :
-           std::filesystem::recursive_directory_iterator(path)) {
+      for (auto &entry : std::filesystem::recursive_directory_iterator(path)) {
         if (entry.is_regular_file()) {
           processFile(entry.path(), test);
         }
