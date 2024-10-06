@@ -245,16 +245,13 @@ bool decopress(uint8_t *cmp, size_t cmpSize, uint8_t *decmp, size_t decmpSize) {
   return idx == decmpSize;
 }
 
-uint32_t parent[1025];
-uint32_t larger[1281];
-uint32_t smaller[1025];
-uint8_t copyBuffer[1024];
 struct Copy {
   uint16_t copyOffset;
   uint8_t copyLen;
 };
 
-void deleteNode(uint32_t oldIdx) {
+void deleteNode(uint32_t *parent, uint32_t *larger, uint32_t *smaller,
+                uint32_t oldIdx) {
   if (parent[oldIdx] == 0x400)
     return;
 
@@ -283,7 +280,8 @@ void deleteNode(uint32_t oldIdx) {
   parent[oldIdx] = 0x400;
 }
 
-Copy insertNode(uint32_t newIdx) {
+Copy insertNode(uint32_t *parent, uint32_t *larger, uint32_t *smaller,
+                uint8_t *copyBuffer, uint32_t newIdx) {
   uint8_t curr = copyBuffer[newIdx];
   int diff = 1;
   smaller[newIdx] = 0x400;
@@ -342,6 +340,10 @@ Copy insertNode(uint32_t newIdx) {
 }
 
 size_t compressLZSS(uint8_t *uncomp, size_t uncompSize, uint8_t *comp) {
+  uint32_t parent[1025];
+  uint32_t larger[1281];
+  uint32_t smaller[1025];
+  uint8_t copyBuffer[1024];
   size_t compIdx = 0;
   uint32_t uncompIdx = 0;
   size_t opIdx = 0;
@@ -359,7 +361,7 @@ size_t compressLZSS(uint8_t *uncomp, size_t uncompSize, uint8_t *comp) {
   }
 
   for (uint32_t i = 0x3e0; i <= 0x3f0; i++) {
-    copy = insertNode(i);
+    copy = insertNode(parent, larger, smaller, copyBuffer, i);
   }
 
   while (0 < lookAheadBytes) {
@@ -383,12 +385,12 @@ size_t compressLZSS(uint8_t *uncomp, size_t uncompSize, uint8_t *comp) {
 
     for (uint8_t i = copy.copyLen; i > 0; i--) {
       copyBufferIdx = copyBufferIdx + 1 & 0x3ff;
-      deleteNode(copyBufferIdx + 15 & 0x3ff);
+      deleteNode(parent, larger, smaller, copyBufferIdx + 15 & 0x3ff);
       if (uncompIdx < uncompSize) {
         copyBuffer[copyBufferIdx + 15 & 0x3ff] = uncomp[uncompIdx++];
-        copy = insertNode(copyBufferIdx);
+        copy = insertNode(parent, larger, smaller, copyBuffer, copyBufferIdx);
       } else if (--lookAheadBytes != 0) {
-        copy = insertNode(copyBufferIdx);
+        copy = insertNode(parent, larger, smaller, copyBuffer, copyBufferIdx);
       }
     }
   }
@@ -538,7 +540,6 @@ void processFile(std::filesystem::path path, bool test) {
 
 int main(int argc, char *argv[]) {
   bool test = false;
-  auto start = std::chrono::high_resolution_clock::now();
   for (int i = 1; i < argc; ++i) {
     if (strcmp(argv[i], "--test") == 0 || strcmp(argv[i], "-t") == 0) {
       test = true;
@@ -556,11 +557,5 @@ int main(int argc, char *argv[]) {
       processFile(path, test);
     }
   }
-
-  auto end = std::chrono::high_resolution_clock::now();
-  std::chrono::duration<double, std::milli> duration = end - start;
-
-  std::cout << "Allocs: " << allocs << std::endl;
-  std::cout << "Execution time: " << duration.count() << " ms" << std::endl;
   return 0;
 }
