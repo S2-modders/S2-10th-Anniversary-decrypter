@@ -1,8 +1,9 @@
-#include <cstdint>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <iostream>
+#include <vector>
 
 enum Game { NONE = 0, DNG, ADK };
 struct EncryptedFile {
@@ -542,6 +543,7 @@ void processFile(std::filesystem::path path, bool test) {
 
 int main(int argc, char *argv[]) {
   bool test = false;
+  std::vector<std::future<void>> futures;
   for (int i = 1; i < argc; ++i) {
     if (strcmp(argv[i], "--test") == 0 || strcmp(argv[i], "-t") == 0) {
       test = true;
@@ -551,12 +553,16 @@ int main(int argc, char *argv[]) {
     if (is_directory(path)) {
       for (auto &entry : std::filesystem::recursive_directory_iterator(path)) {
         if (entry.is_regular_file()) {
-          processFile(entry.path(), test);
+          futures.push_back(std::async(processFile, entry.path(), test));
+          // processFile(entry.path(), test);
         }
       }
     } else {
-      processFile(path, test);
+      futures.push_back(std::async(processFile, path, test));
     }
+  }
+  for (auto &future : futures) {
+    future.get();
   }
   return 0;
 }
