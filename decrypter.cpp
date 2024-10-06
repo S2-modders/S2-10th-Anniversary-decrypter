@@ -4,12 +4,13 @@
 #include <iostream>
 
 enum Game { NONE = 0, DNG, ADK };
-struct Header {
+struct EncryptedFile {
   uint32_t magic;
   uint32_t fcc;
-  uint32_t fileCRC;
-  uint32_t crc;
-  uint32_t size;
+  uint32_t fileContentsCrc;
+  uint32_t filenameCrc;
+  uint32_t uncopressedSize;
+  uint8_t body[0];
   Game getGame() {
     return fcc == 0x6b646173 ? ADK : (fcc == 0x30306372 ? DNG : NONE);
   }
@@ -25,6 +26,14 @@ struct Header {
       fcc = 0x6b646173;
     }
   }
+  static EncryptedFile *create(size_t bodySize) {
+    return (EncryptedFile *)malloc(sizeof(EncryptedFile) + bodySize);
+  }
+  static bool isEncryptedFile(uint8_t *filecontents, size_t size) {
+    return size >= getHeaderSize() &&
+           ((EncryptedFile *)filecontents)->getGame() != NONE;
+  }
+  static uint32_t getHeaderSize() { return 20; }
 };
 
 size_t allocs = 0;
@@ -167,24 +176,28 @@ void randomizeKey(uint8_t (&key)[16], uint8_t *filenameLowerCase,
   }
 }
 
-void makeKey(uint8_t (&key)[16], std::string filename, bool randomize,
+void makeKey(uint8_t (&key)[16], char *filename, size_t size, bool randomize,
              Game game) {
   initKey(key, game);
   if (!randomize)
     return;
   // This is enough for Settlers
-  size_t pos = filename.find("ä");
-  if (pos != std::string::npos) {
-    filename.replace(pos, 2, "\xe4");
-  }
-
-  for (char &c : filename) {
-    if (c >= 'A' && c <= 'Z') {
-      c = c + ('a' - 'A');
+  bool shiftLeft = false;
+  for (size_t i = 0; i < size; i++) {
+    if (shiftLeft) {
+      filename[i] = filename[i + 1];
+    }
+    if (filename[i] == '\xc3') {
+      filename[i] = 0xe4;
+      size--;
+      shiftLeft = true;
+    }
+    if (filename[i] >= 'A' && filename[i] <= 'Z') {
+      filename[i] -= 'A' - 'a';
     }
   }
 
-  randomizeKey(key, (uint8_t *)filename.data(), filename.size());
+  randomizeKey(key, (uint8_t *)filename, size);
 }
 
 void decrypt(uint8_t (&key)[16], uint8_t *data, size_t size) {
@@ -211,10 +224,10 @@ bool decopress(uint8_t *cmp, size_t cmpSize, uint8_t *decmp, size_t decmpSize) {
   uint32_t mode = 0;
   for (uint32_t i = 0; i < cmpSize; i++) {
     uint8_t curr = cmp[i];
-    if ((mode & 0x100) == 0) {
+    if (!(mode & 0x100)) {
       mode = curr | 0xff00;
     } else {
-      if ((mode & 1) == 1) {
+      if (mode & 1) {
         if (idx == decmpSize)
           return false;
         decmp[idx++] = curr;
@@ -391,59 +404,58 @@ bool shouldRandomize(std::filesystem::path &path) {
   return path.extension() != ".s2m" && path.extension() != ".sav";
 }
 
-bool dec(uint8_t *filecontents, size_t size, std::filesystem::path &path,
+bool dec(EncryptedFile *encryptedFile, size_t size, std::filesystem::path &path,
          uint8_t *result) {
   std::string filename = path.filename().string();
 
-  Header *header = (Header *)filecontents;
   uint8_t key[16];
-  makeKey(key, filename, shouldRandomize(path), header->getGame());
+  makeKey(key, filename.data(), filename.size(), shouldRandomize(path),
+          encryptedFile->getGame());
   uint32_t crc = genCrc(key, sizeof(key));
-  if (crc != header->crc) {
-    std::cerr << std::hex << "filename crc (" << crc << ") missmatch for file "
-              << path << "! excpected: " << header->crc << std::endl;
+  if (crc != encryptedFile->filenameCrc) {
+    std::cerr << std::hex << "filename crc missmatch: " << crc
+              << " != " << encryptedFile->filenameCrc << " in " << path
+              << std::endl;
     return false;
   }
 
-  decrypt(key, filecontents + sizeof(Header), size - sizeof(Header));
-  bool success = decopress(filecontents + sizeof(Header), size - sizeof(Header),
-                           result, header->size);
+  decrypt(key, encryptedFile->body, size - encryptedFile->getHeaderSize());
+  bool success =
+      decopress(encryptedFile->body, size - encryptedFile->getHeaderSize(),
+                result, encryptedFile->uncopressedSize);
 
   if (!success) {
-    std::cerr << "file size missmatch for file " << path << std::endl;
+    std::cerr << "file size missmatch in " << path << std::endl;
     return false;
   }
 
-  crc = genCrc(result, header->size);
-  if (crc != header->fileCRC) {
-    std::cerr << std::hex << "filedata crc (" << crc << ") missmatch for file "
-              << path << "! excpected: " << header->fileCRC << std::endl;
+  crc = genCrc(result, encryptedFile->uncopressedSize);
+  if (crc != encryptedFile->fileContentsCrc) {
+    std::cerr << std::hex << "filedata crc missmatch: " << crc
+              << " != " << encryptedFile->fileContentsCrc << " in " << path
+              << std::endl;
     return false;
   }
-
-  path.replace_extension((header->getGame() == ADK ? ".adk" : ".dng") +
-                         path.extension().string());
 
   return true;
 }
 
 size_t enc(uint8_t *filecontents, size_t size, std::filesystem::path &path,
-           Game game, uint8_t *result) {
+           Game game, EncryptedFile *encryptedFile) {
   std::string filename = path.filename().string();
 
   uint8_t key[16];
-  makeKey(key, filename, shouldRandomize(path), game);
+  makeKey(key, filename.data(), filename.size(), shouldRandomize(path), game);
 
-  Header *header = (Header *)result;
-  header->magic = 0x06091812;
-  header->setGame(game);
-  header->fileCRC = genCrc(filecontents, size);
-  header->crc = genCrc(key, sizeof(key));
-  header->size = size;
-  size_t mySize = compress(filecontents, size, result + sizeof(Header));
-  decrypt(key, result + sizeof(Header), mySize);
+  encryptedFile->magic = 0x06091812;
+  encryptedFile->setGame(game);
+  encryptedFile->fileContentsCrc = genCrc(filecontents, size);
+  encryptedFile->filenameCrc = genCrc(key, sizeof(key));
+  encryptedFile->uncopressedSize = size;
+  size_t mySize = compress(filecontents, size, encryptedFile->body);
+  decrypt(key, encryptedFile->body, mySize);
 
-  return mySize + sizeof(Header);
+  return encryptedFile->getHeaderSize() + mySize;
 }
 
 void processFile(std::filesystem::path path, bool test) {
@@ -453,11 +465,11 @@ void processFile(std::filesystem::path path, bool test) {
   file.read((char *)filecontents, size);
   file.close();
 
-  Header *header = (Header *)filecontents;
+  EncryptedFile *encryptedFile = (EncryptedFile *)filecontents;
   if (!test) {
     uint8_t *result;
     size_t resSize;
-    if (size < sizeof(Header) || !header->getGame()) {
+    if (!EncryptedFile::isEncryptedFile(filecontents, size)) {
       std::string filename = path.filename();
       size_t adk = filename.find(".adk");
       size_t dng = filename.find(".dng");
@@ -469,19 +481,21 @@ void processFile(std::filesystem::path path, bool test) {
         std::cerr << "can't determine filetype for " << path << std::endl;
         return;
       }
-      result = new uint8_t[sizeof(Header) + size / 8 + 1 + size];
+      EncryptedFile *encrypted = EncryptedFile::create(size / 8 + 1 + size);
       resSize = enc(filecontents, size, path,
-                    adk != std::string::npos ? ADK : DNG, result);
+                    adk != std::string::npos ? ADK : DNG, encrypted);
+      result = (uint8_t *)encrypted;
     } else {
-      result = new uint8_t[header->size];
-      resSize = header->size;
-      if (!dec(filecontents, size, path, result)) {
+      result = new uint8_t[encryptedFile->uncopressedSize];
+      resSize = encryptedFile->uncopressedSize;
+      if (!dec(encryptedFile, size, path, result)) {
         delete[] result;
         delete[] filecontents;
         return;
       }
-      path.replace_extension((header->getGame() == ADK ? ".adk" : ".dng") +
-                             path.extension().string());
+      path.replace_extension(
+          (encryptedFile->getGame() == ADK ? ".adk" : ".dng") +
+          path.extension().string());
     }
     delete[] filecontents;
     std::ofstream outFile(path, std::ios::binary);
@@ -499,17 +513,18 @@ void processFile(std::filesystem::path path, bool test) {
     delete[] result;
     return;
   }
-  if (size < sizeof(Header) || !header->getGame())
+  if (!EncryptedFile::isEncryptedFile(filecontents, size))
     return;
   uint8_t *result;
-  result = new uint8_t[header->size];
-  if (!dec(filecontents, size, path, result)) {
+  result = new uint8_t[encryptedFile->uncopressedSize];
+  if (!dec(encryptedFile, size, path, result)) {
     delete[] result;
     delete[] filecontents;
     return;
   }
-  uint8_t *encRes = new uint8_t[sizeof(Header) + size / 8 + 1 + size];
-  size_t encSize = enc(result, header->size, path, header->getGame(), encRes);
+  EncryptedFile *encrypted = EncryptedFile::create(size / 8 + 1 + size);
+  size_t encSize = enc(result, encryptedFile->uncopressedSize, path,
+                       encryptedFile->getGame(), encrypted);
   delete[] result;
   if (size > encSize) {
     std::cout << "saved " << size - encSize << " bytes in " << path
@@ -519,9 +534,9 @@ void processFile(std::filesystem::path path, bool test) {
     std::cerr << "lost " << encSize - size << " bytes in compression size in "
               << path << std::endl;
   }
-  result = new uint8_t[header->size];
-  dec(encRes, encSize, path, result);
-  delete[] encRes;
+  result = new uint8_t[encryptedFile->uncopressedSize];
+  dec(encrypted, encSize, path, result);
+  delete[] encrypted;
   delete[] result;
   delete[] filecontents;
 }
