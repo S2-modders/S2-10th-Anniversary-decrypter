@@ -233,7 +233,7 @@ bool decopress(uint8_t *cmp, size_t cmpSize, uint8_t *decmp, size_t decmpSize) {
         decmp[idx++] = curr;
       } else if (++i < cmpSize) {
         uint32_t cp = (16 - idx + curr + ((cmp[i] & 0xf0) << 4)) & 0x3ff;
-        for (int j = 0; j < (cmp[i] & 0xf) + 3; j++) {
+        for (uint32_t j = 0; j < (cmp[i] & 0xf) + 3; j++) {
           if (idx == decmpSize)
             return false;
           decmp[idx++] = cp + idx < 1024 ? ' ' : decmp[cp + idx - 1024];
@@ -245,159 +245,154 @@ bool decopress(uint8_t *cmp, size_t cmpSize, uint8_t *decmp, size_t decmpSize) {
   return idx == decmpSize;
 }
 
-uint32_t dataBuffer[1026];
-uint32_t cbi0[1281];
-uint32_t copyOffset;
-uint32_t cbi1[1025];
+uint32_t parent[1025];
+uint32_t larger[1281];
+uint32_t smaller[1025];
 uint8_t copyBuffer[1024];
-uint32_t copyLen;
+struct Copy {
+  uint16_t copyOffset;
+  uint8_t copyLen;
+};
 
-void init(uint32_t idx) {
-  if (dataBuffer[idx] == 0x400)
+void deleteNode(uint32_t oldIdx) {
+  if (parent[oldIdx] == 0x400)
     return;
 
-  uint32_t curr = cbi0[idx] != 0x400 ? cbi0[idx] : cbi1[idx];
-  if (cbi0[idx] != 0x400 && cbi1[idx] != 0x400) {
-    curr = cbi1[idx];
-    if (cbi0[curr] != 0x400) {
-      while (cbi0[curr] != 0x400) {
-        curr = cbi0[curr];
+  uint32_t newIdx = larger[oldIdx] != 0x400 ? larger[oldIdx] : smaller[oldIdx];
+  if (larger[oldIdx] != 0x400 && smaller[oldIdx] != 0x400) {
+    newIdx = smaller[oldIdx];
+    if (larger[newIdx] != 0x400) {
+      while (larger[newIdx] != 0x400) {
+        newIdx = larger[newIdx];
       }
-      dataBuffer[cbi1[curr]] = dataBuffer[curr];
-      cbi0[dataBuffer[curr]] = cbi1[curr];
-      cbi1[curr] = cbi1[idx];
-      dataBuffer[cbi1[idx]] = curr;
+      parent[smaller[newIdx]] = parent[newIdx];
+      larger[parent[newIdx]] = smaller[newIdx];
+      smaller[newIdx] = smaller[oldIdx];
+      parent[smaller[oldIdx]] = newIdx;
     }
-    cbi0[curr] = cbi0[idx];
-    dataBuffer[cbi0[idx]] = curr;
+    larger[newIdx] = larger[oldIdx];
+    parent[larger[oldIdx]] = newIdx;
   }
 
-  dataBuffer[curr] = dataBuffer[idx];
-  uint32_t tmp = dataBuffer[idx];
-  if (cbi0[tmp] == idx) {
-    cbi0[tmp] = curr;
+  parent[newIdx] = parent[oldIdx];
+  if (larger[parent[oldIdx]] == oldIdx) {
+    larger[parent[oldIdx]] = newIdx;
   } else {
-    cbi1[tmp] = curr;
+    smaller[parent[oldIdx]] = newIdx;
   }
-  dataBuffer[idx] = 0x400;
+  parent[oldIdx] = 0x400;
 }
 
-void search(uint32_t copybufferIdx) {
-  uint8_t curr = copyBuffer[copybufferIdx];
+Copy insertNode(uint32_t newIdx) {
+  uint8_t curr = copyBuffer[newIdx];
   int diff = 1;
-  cbi1[copybufferIdx] = 0x400;
-  cbi0[copybufferIdx] = 0x400;
-  copyLen = 0;
+  smaller[newIdx] = 0x400;
+  larger[newIdx] = 0x400;
   uint32_t currIdx = curr + 0x401;
+  Copy copy{0, 0};
   while (true) {
 
-    uint32_t currCopyOffest;
+    uint32_t oldIdx;
     if (diff < 0) {
-      currCopyOffest = cbi1[currIdx];
-      if (currCopyOffest == 0x400) {
-        cbi1[currIdx] = copybufferIdx;
-        dataBuffer[copybufferIdx] = currIdx;
-        return;
+      oldIdx = smaller[currIdx];
+      if (oldIdx == 0x400) {
+        smaller[currIdx] = newIdx;
+        parent[newIdx] = currIdx;
+        return copy;
       }
     } else {
-      currCopyOffest = cbi0[currIdx];
-      if (currCopyOffest == 0x400) {
-        cbi0[currIdx] = copybufferIdx;
-        dataBuffer[copybufferIdx] = currIdx;
-        return;
+      oldIdx = larger[currIdx];
+      if (oldIdx == 0x400) {
+        larger[currIdx] = newIdx;
+        parent[newIdx] = currIdx;
+        return copy;
       }
     }
 
     uint32_t currCopyLen = 1;
     for (; currCopyLen < 16; currCopyLen++) {
-      diff = copyBuffer[copybufferIdx + currCopyLen & 0x3ff] -
-             copyBuffer[currCopyOffest + currCopyLen & 0x3ff];
+      diff = copyBuffer[newIdx + currCopyLen & 0x3ff] -
+             copyBuffer[oldIdx + currCopyLen & 0x3ff];
       if (diff != 0)
         break;
     }
 
-    currIdx = currCopyOffest;
-    if ((copyLen < currCopyLen) &&
-        (copyLen = currCopyLen, copyOffset = currCopyOffest,
-         0xf < currCopyLen)) {
-      dataBuffer[copybufferIdx] = dataBuffer[currCopyOffest];
-      cbi1[copybufferIdx] = cbi1[currCopyOffest];
-      cbi0[copybufferIdx] = cbi0[currCopyOffest];
-      dataBuffer[cbi1[currCopyOffest]] = copybufferIdx;
-      dataBuffer[cbi0[currCopyOffest]] = copybufferIdx;
-      uint32_t tmp = dataBuffer[currCopyOffest];
-      if (cbi0[tmp] == currCopyOffest) {
-        cbi0[tmp] = copybufferIdx;
+    currIdx = oldIdx;
+    if ((copy.copyLen < currCopyLen) &&
+        (copy.copyLen = currCopyLen, copy.copyOffset = oldIdx,
+         15 < currCopyLen)) {
+
+      parent[newIdx] = parent[oldIdx];
+      smaller[newIdx] = smaller[oldIdx];
+      larger[newIdx] = larger[oldIdx];
+
+      parent[smaller[oldIdx]] = newIdx;
+      parent[larger[oldIdx]] = newIdx;
+
+      uint32_t tmp = parent[oldIdx];
+      if (larger[tmp] == oldIdx) {
+        larger[tmp] = newIdx;
       } else {
-        cbi1[tmp] = copybufferIdx;
+        smaller[tmp] = newIdx;
       }
-      dataBuffer[currCopyOffest] = 0x400;
-      return;
+      parent[oldIdx] = 0x400;
+      return copy;
     }
   }
 }
 
-size_t compress(uint8_t *uncompressed, size_t uncompressedSize,
-                uint8_t *compressed) {
-  size_t myIdx = 0;
-  uint32_t idx = 0;
+size_t compressLZSS(uint8_t *uncomp, size_t uncompSize, uint8_t *comp) {
+  size_t compIdx = 0;
+  uint32_t uncompIdx = 0;
   size_t opIdx = 0;
   uint8_t opCode = 0;
   uint32_t copyBufferIdx = 0x3f0;
-  std::fill(std::begin(cbi0) + 0x401, std::end(cbi0), 0x400);
-  std::fill(std::begin(dataBuffer), std::end(dataBuffer), 0x400);
+  Copy copy;
+  std::fill(std::begin(larger) + 0x401, std::end(larger), 0x400);
+  std::fill(std::begin(parent), std::end(parent), 0x400);
   std::fill(std::begin(copyBuffer), std::end(copyBuffer), 0x20);
 
-  uint32_t j;
-  for (j = 0; j < 16 && uncompressedSize > idx; j++) {
-    copyBuffer[j + 0x3f0] = uncompressed[idx++];
+  uint32_t lookAheadBytes;
+  for (lookAheadBytes = 0; lookAheadBytes < 16 && uncompSize > uncompIdx;
+       lookAheadBytes++) {
+    copyBuffer[lookAheadBytes + 0x3f0] = uncomp[uncompIdx++];
   }
 
   for (uint32_t i = 0x3e0; i <= 0x3f0; i++) {
-    search(i);
+    copy = insertNode(i);
   }
 
-  uint32_t nextCopyLen = 0;
-  while (0 < j) {
-    if (j < copyLen) {
-      copyLen = j;
+  while (0 < lookAheadBytes) {
+    if (lookAheadBytes < copy.copyLen) {
+      copy.copyLen = lookAheadBytes;
     }
 
     opCode <<= 1;
     if (!opCode) {
-      compressed[opIdx = myIdx++] = 0;
+      comp[opIdx = compIdx++] = 0;
       opCode = 1;
     }
-    if (copyLen < 3) {
-      copyLen = 1;
-      compressed[opIdx] |= opCode;
-      compressed[myIdx++] = copyBuffer[copyBufferIdx];
+    if (copy.copyLen < 3) {
+      copy.copyLen = 1;
+      comp[opIdx] |= opCode;
+      comp[compIdx++] = copyBuffer[copyBufferIdx];
     } else {
-      compressed[myIdx++] = copyOffset;
-      compressed[myIdx++] = copyOffset >> 4 & 0xf0 | copyLen - 3;
+      comp[compIdx++] = copy.copyOffset;
+      comp[compIdx++] = copy.copyOffset >> 4 & 0xf0 | copy.copyLen - 3;
     }
 
-    for (uint8_t i = copyLen; i > 0; i--) {
-      if (uncompressedSize == idx) {
-        for (; i > 0; i--) {
-          init(nextCopyLen);
-          nextCopyLen = nextCopyLen + 1 & 0x3ff;
-          copyBufferIdx = copyBufferIdx + 1 & 0x3ff;
-          if (--j != 0) {
-            search(copyBufferIdx);
-          }
-        }
-        break;
-      }
-
-      init(nextCopyLen);
-      copyBuffer[nextCopyLen] = uncompressed[idx++];
-      nextCopyLen = nextCopyLen + 1 & 0x3ff;
+    for (uint8_t i = copy.copyLen; i > 0; i--) {
       copyBufferIdx = copyBufferIdx + 1 & 0x3ff;
-      search(copyBufferIdx);
+      deleteNode(copyBufferIdx + 15 & 0x3ff);
+      if (uncompIdx < uncompSize) {
+        copyBuffer[copyBufferIdx + 15 & 0x3ff] = uncomp[uncompIdx++];
+        copy = insertNode(copyBufferIdx);
+      } else if (--lookAheadBytes != 0) {
+        copy = insertNode(copyBufferIdx);
+      }
     }
   }
-  return myIdx;
+  return compIdx;
 }
 
 bool shouldRandomize(std::filesystem::path &path) {
@@ -452,7 +447,7 @@ size_t enc(uint8_t *filecontents, size_t size, std::filesystem::path &path,
   encryptedFile->fileContentsCrc = genCrc(filecontents, size);
   encryptedFile->filenameCrc = genCrc(key, sizeof(key));
   encryptedFile->uncopressedSize = size;
-  size_t mySize = compress(filecontents, size, encryptedFile->body);
+  size_t mySize = compressLZSS(filecontents, size, encryptedFile->body);
   decrypt(key, encryptedFile->body, mySize);
 
   return encryptedFile->getHeaderSize() + mySize;
