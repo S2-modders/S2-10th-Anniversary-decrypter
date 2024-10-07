@@ -258,9 +258,8 @@ void deleteNode(uint32_t *parent, uint32_t *larger, uint32_t *smaller,
   if (parent[oldIdx] == 0x400)
     return;
 
-  uint32_t newIdx = larger[oldIdx] != 0x400 ? larger[oldIdx] : smaller[oldIdx];
+  uint32_t newIdx = smaller[oldIdx] != 0x400 ? smaller[oldIdx] : larger[oldIdx];
   if (larger[oldIdx] != 0x400 && smaller[oldIdx] != 0x400) {
-    newIdx = smaller[oldIdx];
     if (larger[newIdx] != 0x400) {
       while (larger[newIdx] != 0x400) {
         newIdx = larger[newIdx];
@@ -452,10 +451,10 @@ size_t enc(uint8_t *filecontents, size_t size, std::filesystem::path &path,
   encryptedFile->fileContentsCrc = genCrc(filecontents, size);
   encryptedFile->filenameCrc = genCrc(key, sizeof(key));
   encryptedFile->uncopressedSize = size;
-  size_t mySize = compressLZSS(filecontents, size, encryptedFile->body);
-  decrypt(key, encryptedFile->body, mySize);
+  size_t copressedSize = compressLZSS(filecontents, size, encryptedFile->body);
+  decrypt(key, encryptedFile->body, copressedSize);
 
-  return encryptedFile->getHeaderSize() + mySize;
+  return encryptedFile->getHeaderSize() + copressedSize;
 }
 
 void processFile(std::filesystem::path path, bool test) {
@@ -554,7 +553,6 @@ int main(int argc, char *argv[]) {
       for (auto &entry : std::filesystem::recursive_directory_iterator(path)) {
         if (entry.is_regular_file()) {
           futures.push_back(std::async(processFile, entry.path(), test));
-          // processFile(entry.path(), test);
         }
       }
     } else {
