@@ -310,7 +310,7 @@ Copy insertNode(uint32_t *parent, uint32_t *larger, uint32_t *smaller,
     }
 
     uint32_t currCopyLen = 1;
-    for (; currCopyLen < 16; currCopyLen++) {
+    for (; currCopyLen < 18; currCopyLen++) {
       diff = copyBuffer[newIdx + currCopyLen & 0x3ff] -
              copyBuffer[oldIdx + currCopyLen & 0x3ff];
       if (diff != 0)
@@ -320,7 +320,7 @@ Copy insertNode(uint32_t *parent, uint32_t *larger, uint32_t *smaller,
     currIdx = oldIdx;
     if ((copy.copyLen < currCopyLen) &&
         (copy.copyLen = currCopyLen, copy.copyOffset = oldIdx,
-         15 < currCopyLen)) {
+         17 < currCopyLen)) {
 
       parent[newIdx] = parent[oldIdx];
       smaller[newIdx] = smaller[oldIdx];
@@ -357,12 +357,12 @@ size_t compressLZSS(uint8_t *uncomp, size_t uncompSize, uint8_t *comp) {
   std::fill(std::begin(copyBuffer), std::end(copyBuffer), 0x20);
 
   uint32_t lookAheadBytes;
-  for (lookAheadBytes = 0; lookAheadBytes < 16 && uncompSize > uncompIdx;
+  for (lookAheadBytes = 0; lookAheadBytes < 18 && uncompSize > uncompIdx;
        lookAheadBytes++) {
-    copyBuffer[lookAheadBytes + 0x3f0] = uncomp[uncompIdx++];
+    copyBuffer[lookAheadBytes + 0x3f0 & 0x3ff] = uncomp[uncompIdx++];
   }
 
-  for (uint32_t i = 0x3e0; i <= 0x3f0; i++) {
+  for (uint32_t i = 0x3de; i <= 0x3f0; i++) {
     copy = insertNode(parent, larger, smaller, copyBuffer, i);
   }
 
@@ -387,9 +387,9 @@ size_t compressLZSS(uint8_t *uncomp, size_t uncompSize, uint8_t *comp) {
 
     for (uint8_t i = copy.copyLen; i > 0; i--) {
       copyBufferIdx = copyBufferIdx + 1 & 0x3ff;
-      deleteNode(parent, larger, smaller, copyBufferIdx + 15 & 0x3ff);
+      deleteNode(parent, larger, smaller, copyBufferIdx + 17 & 0x3ff);
       if (uncompIdx < uncompSize) {
-        copyBuffer[copyBufferIdx + 15 & 0x3ff] = uncomp[uncompIdx++];
+        copyBuffer[copyBufferIdx + 17 & 0x3ff] = uncomp[uncompIdx++];
         copy = insertNode(parent, larger, smaller, copyBuffer, copyBufferIdx);
       } else if (--lookAheadBytes != 0) {
         copy = insertNode(parent, larger, smaller, copyBuffer, copyBufferIdx);
@@ -457,6 +457,7 @@ size_t enc(uint8_t *filecontents, size_t size, std::filesystem::path &path,
   return encryptedFile->getHeaderSize() + copressedSize;
 }
 
+int64_t savedBytes = 0;
 void processFile(std::filesystem::path path, bool test) {
   std::ifstream file(path, std::ios::binary);
   size_t size = std::filesystem::file_size(path);
@@ -525,13 +526,16 @@ void processFile(std::filesystem::path path, bool test) {
   size_t encSize = enc(result, encryptedFile->uncopressedSize, path,
                        encryptedFile->getGame(), encrypted);
   delete[] result;
+
+  savedBytes += size - encSize;
   if (size > encSize) {
-    std::cout << "saved " << size - encSize << " bytes in " << path
-              << std::endl;
+    // std::cout << "saved " << size - encSize << " bytes in " << path
+    //           << std::endl;
   }
   if (size < encSize) {
-    std::cerr << "lost " << encSize - size << " bytes in compression size in "
-              << path << std::endl;
+    // std::cerr << "lost " << encSize - size << " bytes in compression size in
+    // "
+    //           << path << std::endl;
   }
   result = new uint8_t[encryptedFile->uncopressedSize];
   dec(encrypted, encSize, path, result);
@@ -562,5 +566,6 @@ int main(int argc, char *argv[]) {
   for (auto &future : futures) {
     future.get();
   }
+  std::cout << "saved Bytes: " << savedBytes << std::endl;
   return 0;
 }
