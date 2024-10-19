@@ -6,8 +6,6 @@ decrypts and encrypts the assets of The Settlers II 10th Anniversary.
 
 Have cargo installed and run `cargo run /path/to/file/or/dir`
 
-_Note: you need at least c++ 17 to be able to compile it_
-
 ## Ussage
 
 ### Windows
