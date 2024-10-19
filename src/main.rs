@@ -515,8 +515,8 @@ fn main() {
                 let key = make_key(&file.0, header.game);
                 let res = decrypt(file.0.display(), &key, header, &mut file.1[20..])?;
                 let ext = match header.game {
-                    Game::ADK => ".adk",
-                    Game::DNG => ".dng",
+                    Game::ADK => "adk.",
+                    Game::DNG => "dng.",
                 };
                 file.0
                     .set_extension(ext.to_owned() + file.0.extension().unwrap().to_str().unwrap());
