@@ -4,7 +4,7 @@ decrypts and encrypts the assets of The Settlers II 10th Anniversary.
 
 ## How To Build
 
-Have a c++ compiler installed and run `g++ decrypter.cpp -o decrypter`.
+Have cargo installed and run `cargo run /path/to/file/or/dir`
 
 _Note: you need at least c++ 17 to be able to compile it_
 
