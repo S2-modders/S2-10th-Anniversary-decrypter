@@ -1,4 +1,5 @@
 use rayon::prelude::*;
+use std::array::from_fn;
 use std::env;
 use std::path::Path;
 use walkdir::WalkDir;
@@ -275,16 +276,17 @@ fn decrypt(
     Ok(res)
 }
 
-#[derive(Debug, Copy, Clone)]
 struct TreeNode {
+    val: usize,
     parent: u32,
     larger: u32,
     smaller: u32,
 }
 
 impl TreeNode {
-    fn new() -> Self {
+    fn new(val: usize) -> Self {
         TreeNode {
+            val,
             parent: 0x400,
             larger: 0x400,
             smaller: 0x400,
@@ -292,7 +294,6 @@ impl TreeNode {
     }
 }
 
-#[derive(Default, Debug, Copy, Clone)]
 struct Copy {
     copy_len: u32,
     copy_offset: u32,
@@ -337,9 +338,12 @@ fn delete_node(tree: &mut [TreeNode], old_idx: usize) {
 fn search(tree: &mut [TreeNode], copy_buffer: &[u8], new_idx: usize) -> Copy {
     let curr = copy_buffer[new_idx];
     let mut diff = 1;
-    tree[new_idx] = TreeNode::new();
+    tree[new_idx] = TreeNode::new(new_idx);
     let mut curr_idx = (curr as usize) + 0x401;
-    let mut copy = Copy::default();
+    let mut copy = Copy {
+        copy_len: 0,
+        copy_offset: 0,
+    };
 
     if tree[curr_idx].larger == 0x400 {
         tree[curr_idx].larger = new_idx as u32;
@@ -352,7 +356,7 @@ fn search(tree: &mut [TreeNode], copy_buffer: &[u8], new_idx: usize) -> Copy {
         let mut curr_copy_len = 1;
         for _ in 1..18 {
             let idx_new = (new_idx + curr_copy_len) & 0x3FF;
-            let idx_curr = (curr_idx + curr_copy_len) & 0x3FF;
+            let idx_curr = (tree[curr_idx].val + curr_copy_len) & 0x3FF;
             diff = copy_buffer[idx_new] as i32 - copy_buffer[idx_curr] as i32;
             if diff != 0 {
                 break;
@@ -410,14 +414,17 @@ fn insert_node(tree: &mut [TreeNode], new_idx: usize, curr_idx: usize) {
 
 fn compress_lzss(uncomp: &[u8]) -> Vec<u8> {
     let mut comp = vec![0u8; uncomp.len() * 9 / 8 + 1];
-    let mut tree = [TreeNode::new(); 1281];
+    let mut tree: [TreeNode; 1281] = from_fn(|i| TreeNode::new(i));
     let mut copy_buffer = [0x20u8; 1024];
     let mut comp_idx = 0;
     let mut uncomp_idx = 0;
     let mut op_idx = 0;
     let mut op_code = 0;
     let mut copy_buffer_idx = 0x3f0;
-    let mut copy = Copy::default();
+    let mut copy = Copy {
+        copy_len: 0,
+        copy_offset: 0,
+    };
 
     let mut look_ahead_bytes = 0;
     while look_ahead_bytes < 18 && uncomp.len() > uncomp_idx {
