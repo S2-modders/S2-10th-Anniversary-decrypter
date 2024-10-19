@@ -1,0 +1,10 @@
+[package]
+name = "decrypter_S2"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+encoding_rs = "0.8.34"
+include-bytes-plus = "1.1.0"
+rayon = "1.10.0"
+walkdir = "2.5.0"
