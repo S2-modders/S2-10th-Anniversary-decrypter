@@ -321,6 +321,10 @@ fn delete_node(tree: &mut [TreeNode], old_idx: usize) {
     }
 
     tree[new_idx].parent = tree[old_idx].parent;
+    change_parent(tree, old_idx, new_idx);
+}
+
+fn change_parent(tree: &mut [TreeNode], old_idx: usize, new_idx: usize) {
     if tree[tree[old_idx].parent as usize].larger == old_idx as u32 {
         tree[tree[old_idx].parent as usize].larger = new_idx as u32;
     } else {
@@ -395,14 +399,7 @@ fn insert_node(tree: &mut [TreeNode], new_idx: usize, curr_idx: usize) {
 
     tree[tree[curr_idx].smaller as usize].parent = new_idx as u32;
     tree[tree[curr_idx].larger as usize].parent = new_idx as u32;
-
-    let tmp = tree[curr_idx].parent;
-    if tree[tmp as usize].larger == curr_idx as u32 {
-        tree[tmp as usize].larger = new_idx as u32;
-    } else {
-        tree[tmp as usize].smaller = new_idx as u32;
-    }
-    tree[curr_idx].parent = 0x400;
+    change_parent(tree, curr_idx, new_idx);
 }
 
 fn compress_lzss(uncomp: &[u8]) -> Vec<u8> {
