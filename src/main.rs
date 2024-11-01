@@ -1,5 +1,6 @@
 use rayon::prelude::*;
 use std::array::from_fn;
+use std::cmp::min;
 use std::env;
 use std::path::Path;
 use walkdir::WalkDir;
@@ -334,7 +335,7 @@ fn change_parent(tree: &mut [TreeNode], old_idx: usize, new_idx: usize) {
     tree[old_idx].parent = 0x400;
 }
 
-fn search(tree: &mut [TreeNode], copy_buffer: &[u8], new_idx: usize) -> (u32, u32) {
+fn search(tree: &mut [TreeNode], copy_buffer: &[u8], new_idx: usize) -> (u8, u16) {
     let curr = copy_buffer[new_idx];
     let mut diff = 1;
     tree[new_idx] = TreeNode::new(new_idx as u16);
@@ -356,19 +357,15 @@ fn search(tree: &mut [TreeNode], copy_buffer: &[u8], new_idx: usize) -> (u32, u3
             let idx_curr = tree[curr_idx].val as usize + i;
             diff = copy_buffer[idx_new] as i32 - copy_buffer[idx_curr] as i32;
             if diff != 0 {
-                curr_copy_len = i;
+                curr_copy_len = i as u8;
                 break;
             }
         }
 
-        if copy_len < curr_copy_len as u32 {
-            copy_len = curr_copy_len as u32;
-            copy_offset = curr_idx as u32;
-
-            if curr_copy_len > 17 {
-                copy_len = curr_copy_len as u32;
-                copy_offset = curr_idx as u32;
-
+        if copy_len < curr_copy_len {
+            copy_len = curr_copy_len;
+            copy_offset = curr_idx as u16;
+            if curr_copy_len == 18 {
                 insert_node(tree, new_idx, curr_idx);
                 return (copy_len, copy_offset);
             }
@@ -407,29 +404,23 @@ fn compress_lzss(uncomp: &[u8]) -> Vec<u8> {
     comp.reserve(uncomp.len());
     let mut tree: [TreeNode; 1281] = from_fn(|i| TreeNode::new(i as u16));
     let mut copy_buffer = [0x20u8; 1024 + 17];
-    let mut uncomp_idx = 0;
     let mut op_idx = 0;
     let mut op_code = 0;
-    let mut copy_buffer_idx = 0x3f0;
-    let mut look_ahead_bytes = 0;
     let mut copy_len = 0;
     let mut copy_offset = 0;
 
-    while look_ahead_bytes < 18 && uncomp.len() > uncomp_idx {
-        copy_buffer[(look_ahead_bytes + 0x3f0) & 0x3ff] = uncomp[uncomp_idx];
-        copy_buffer[look_ahead_bytes + 0x3f0] = uncomp[uncomp_idx];
-        uncomp_idx += 1;
-        look_ahead_bytes += 1;
+    for i in 0..min(18, uncomp.len()) {
+        copy_buffer[(i + 0x3f0) & 0x3ff] = uncomp[i];
+        copy_buffer[i + 0x3f0] = uncomp[i];
     }
 
     for i in 0x3de..0x3f1 {
         (copy_len, copy_offset) = search(&mut tree, &copy_buffer, i);
     }
 
-    while look_ahead_bytes > 0 {
-        if look_ahead_bytes < copy_len as usize {
-            copy_len = look_ahead_bytes as u32;
-        }
+    let mut i = 0;
+    while i < uncomp.len() {
+        copy_len = min(copy_len as usize, uncomp.len() - i) as u8;
 
         op_code <<= 1;
         if op_code == 0 {
@@ -441,25 +432,21 @@ fn compress_lzss(uncomp: &[u8]) -> Vec<u8> {
         if copy_len < 3 {
             copy_len = 1;
             comp[op_idx] |= op_code;
-            comp.push(copy_buffer[copy_buffer_idx]);
+            comp.push(uncomp[i]);
         } else {
             comp.push(copy_offset as u8);
-            comp.push((copy_offset >> 4) as u8 & 0xf0 | (copy_len - 3) as u8);
+            comp.push((copy_offset >> 4) as u8 & 0xf0 | copy_len - 3);
         }
 
         for _ in 0..copy_len {
-            copy_buffer_idx = (copy_buffer_idx + 1) & 0x3ff;
-            delete_node(&mut tree, (copy_buffer_idx + 17) & 0x3ff);
-            if uncomp_idx < uncomp.len() {
-                copy_buffer[(copy_buffer_idx + 17) & 0x3ff] = uncomp[uncomp_idx];
-                copy_buffer[copy_buffer_idx + 17] = uncomp[uncomp_idx];
-                uncomp_idx += 1;
-                (copy_len, copy_offset) = search(&mut tree, &copy_buffer, copy_buffer_idx);
-            } else {
-                look_ahead_bytes -= 1;
-                if look_ahead_bytes > 0 {
-                    (copy_len, copy_offset) = search(&mut tree, &copy_buffer, copy_buffer_idx);
-                }
+            i += 1;
+            delete_node(&mut tree, (i + 1) & 0x3ff);
+            if i + 17 < uncomp.len() {
+                copy_buffer[(i + 1) & 0x3ff] = uncomp[i + 17];
+                copy_buffer[((i + 0x3f0) & 0x3ff) + 17] = uncomp[i + 17];
+            }
+            if i < uncomp.len() {
+                (copy_len, copy_offset) = search(&mut tree, &copy_buffer, (i + 0x3f0) & 0x3ff);
             }
         }
     }
@@ -497,12 +484,12 @@ fn main() {
         .map(|file| (file.clone(), std::fs::read(file).unwrap()))
         .map(|mut file| -> Result<_, String> {
             if let Ok(header) = Header::from(&file.1) {
-                let key = make_key(&file.0, header.game);
-                let res = decrypt(file.0.display(), &key, header, &mut file.1[20..])?;
                 let ext = match header.game {
                     Game::ADK => "adk.",
                     Game::DNG => "dng.",
                 };
+                let key = make_key(&file.0, header.game);
+                let res = decrypt(file.0.display(), &key, header, &mut file.1[20..])?;
                 file.0
                     .set_extension(ext.to_owned() + file.0.extension().unwrap().to_str().unwrap());
                 std::fs::write(&file.0, &res)
