@@ -403,10 +403,10 @@ fn insert_node(tree: &mut [TreeNode], new_idx: usize, curr_idx: usize) {
 }
 
 fn compress_lzss(uncomp: &[u8]) -> Vec<u8> {
-    let mut comp = vec![0u8; uncomp.len() * 9 / 8 + 1];
+    let mut comp = Vec::new();
+    comp.reserve(uncomp.len());
     let mut tree: [TreeNode; 1281] = from_fn(|i| TreeNode::new(i as u16));
     let mut copy_buffer = [0x20u8; 1024 + 17];
-    let mut comp_idx = 0;
     let mut uncomp_idx = 0;
     let mut op_idx = 0;
     let mut op_code = 0;
@@ -433,22 +433,18 @@ fn compress_lzss(uncomp: &[u8]) -> Vec<u8> {
 
         op_code <<= 1;
         if op_code == 0 {
-            op_idx = comp_idx;
-            comp_idx += 1;
-            comp[op_idx] = 0;
+            op_idx = comp.len();
+            comp.push(0);
             op_code = 1;
         }
 
         if copy_len < 3 {
             copy_len = 1;
             comp[op_idx] |= op_code;
-            comp[comp_idx] = copy_buffer[copy_buffer_idx];
-            comp_idx += 1;
+            comp.push(copy_buffer[copy_buffer_idx]);
         } else {
-            comp[comp_idx] = copy_offset as u8;
-            comp_idx += 1;
-            comp[comp_idx] = (copy_offset >> 4) as u8 & 0xf0 | (copy_len - 3) as u8;
-            comp_idx += 1;
+            comp.push(copy_offset as u8);
+            comp.push((copy_offset >> 4) as u8 & 0xf0 | (copy_len - 3) as u8);
         }
 
         for _ in 0..copy_len {
@@ -467,7 +463,6 @@ fn compress_lzss(uncomp: &[u8]) -> Vec<u8> {
             }
         }
     }
-    comp.truncate(comp_idx);
     comp
 }
 
