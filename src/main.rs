@@ -277,14 +277,14 @@ fn decrypt(
 }
 
 struct TreeNode {
-    val: usize,
-    parent: u32,
-    larger: u32,
-    smaller: u32,
+    val: u16,
+    parent: u16,
+    larger: u16,
+    smaller: u16,
 }
 
 impl TreeNode {
-    fn new(val: usize) -> Self {
+    fn new(val: u16) -> Self {
         TreeNode {
             val,
             parent: 0x400,
@@ -314,10 +314,10 @@ fn delete_node(tree: &mut [TreeNode], old_idx: usize) {
 
             tree[tree[new_idx].parent as usize].larger = tree[new_idx].smaller;
             tree[new_idx].smaller = tree[old_idx].smaller;
-            tree[tree[old_idx].smaller as usize].parent = new_idx as u32;
+            tree[tree[old_idx].smaller as usize].parent = new_idx as u16;
         }
         tree[new_idx].larger = tree[old_idx].larger;
-        tree[tree[old_idx].larger as usize].parent = new_idx as u32;
+        tree[tree[old_idx].larger as usize].parent = new_idx as u16;
     }
 
     tree[new_idx].parent = tree[old_idx].parent;
@@ -325,10 +325,10 @@ fn delete_node(tree: &mut [TreeNode], old_idx: usize) {
 }
 
 fn change_parent(tree: &mut [TreeNode], old_idx: usize, new_idx: usize) {
-    if tree[tree[old_idx].parent as usize].larger == old_idx as u32 {
-        tree[tree[old_idx].parent as usize].larger = new_idx as u32;
+    if tree[tree[old_idx].parent as usize].larger == old_idx as u16 {
+        tree[tree[old_idx].parent as usize].larger = new_idx as u16;
     } else {
-        tree[tree[old_idx].parent as usize].smaller = new_idx as u32;
+        tree[tree[old_idx].parent as usize].smaller = new_idx as u16;
     }
 
     tree[old_idx].parent = 0x400;
@@ -337,28 +337,28 @@ fn change_parent(tree: &mut [TreeNode], old_idx: usize, new_idx: usize) {
 fn search(tree: &mut [TreeNode], copy_buffer: &[u8], new_idx: usize) -> (u32, u32) {
     let curr = copy_buffer[new_idx];
     let mut diff = 1;
-    tree[new_idx] = TreeNode::new(new_idx);
+    tree[new_idx] = TreeNode::new(new_idx as u16);
     let mut curr_idx = (curr as usize) + 0x401;
     let mut copy_len = 0;
     let mut copy_offset = 0;
 
     if tree[curr_idx].larger == 0x400 {
-        tree[curr_idx].larger = new_idx as u32;
-        tree[new_idx].parent = curr_idx as u32;
+        tree[curr_idx].larger = new_idx as u16;
+        tree[new_idx].parent = curr_idx as u16;
         return (copy_len, copy_offset);
     }
     curr_idx = tree[curr_idx].larger as usize;
 
     loop {
-        let mut curr_copy_len = 1;
-        for _ in 1..18 {
-            let idx_new = (new_idx + curr_copy_len) & 0x3FF;
-            let idx_curr = (tree[curr_idx].val + curr_copy_len) & 0x3FF;
+        let mut curr_copy_len = 18;
+        for i in 1..18 {
+            let idx_new = new_idx + i;
+            let idx_curr = tree[curr_idx].val as usize + i;
             diff = copy_buffer[idx_new] as i32 - copy_buffer[idx_curr] as i32;
             if diff != 0 {
+                curr_copy_len = i;
                 break;
             }
-            curr_copy_len += 1;
         }
 
         if copy_len < curr_copy_len as u32 {
@@ -376,15 +376,15 @@ fn search(tree: &mut [TreeNode], copy_buffer: &[u8], new_idx: usize) -> (u32, u3
 
         if diff < 0 {
             if tree[curr_idx].smaller == 0x400 {
-                tree[curr_idx].smaller = new_idx as u32;
-                tree[new_idx].parent = curr_idx as u32;
+                tree[curr_idx].smaller = new_idx as u16;
+                tree[new_idx].parent = curr_idx as u16;
                 return (copy_len, copy_offset);
             }
             curr_idx = tree[curr_idx].smaller as usize;
         } else {
             if tree[curr_idx].larger == 0x400 {
-                tree[curr_idx].larger = new_idx as u32;
-                tree[new_idx].parent = curr_idx as u32;
+                tree[curr_idx].larger = new_idx as u16;
+                tree[new_idx].parent = curr_idx as u16;
                 return (copy_len, copy_offset);
             }
             curr_idx = tree[curr_idx].larger as usize;
@@ -397,15 +397,15 @@ fn insert_node(tree: &mut [TreeNode], new_idx: usize, curr_idx: usize) {
     tree[new_idx].smaller = tree[curr_idx].smaller;
     tree[new_idx].larger = tree[curr_idx].larger;
 
-    tree[tree[curr_idx].smaller as usize].parent = new_idx as u32;
-    tree[tree[curr_idx].larger as usize].parent = new_idx as u32;
+    tree[tree[curr_idx].smaller as usize].parent = new_idx as u16;
+    tree[tree[curr_idx].larger as usize].parent = new_idx as u16;
     change_parent(tree, curr_idx, new_idx);
 }
 
 fn compress_lzss(uncomp: &[u8]) -> Vec<u8> {
     let mut comp = vec![0u8; uncomp.len() * 9 / 8 + 1];
-    let mut tree: [TreeNode; 1281] = from_fn(|i| TreeNode::new(i));
-    let mut copy_buffer = [0x20u8; 1024];
+    let mut tree: [TreeNode; 1281] = from_fn(|i| TreeNode::new(i as u16));
+    let mut copy_buffer = [0x20u8; 1024 + 17];
     let mut comp_idx = 0;
     let mut uncomp_idx = 0;
     let mut op_idx = 0;
@@ -417,6 +417,7 @@ fn compress_lzss(uncomp: &[u8]) -> Vec<u8> {
 
     while look_ahead_bytes < 18 && uncomp.len() > uncomp_idx {
         copy_buffer[(look_ahead_bytes + 0x3f0) & 0x3ff] = uncomp[uncomp_idx];
+        copy_buffer[look_ahead_bytes + 0x3f0] = uncomp[uncomp_idx];
         uncomp_idx += 1;
         look_ahead_bytes += 1;
     }
@@ -455,6 +456,7 @@ fn compress_lzss(uncomp: &[u8]) -> Vec<u8> {
             delete_node(&mut tree, (copy_buffer_idx + 17) & 0x3ff);
             if uncomp_idx < uncomp.len() {
                 copy_buffer[(copy_buffer_idx + 17) & 0x3ff] = uncomp[uncomp_idx];
+                copy_buffer[copy_buffer_idx + 17] = uncomp[uncomp_idx];
                 uncomp_idx += 1;
                 (copy_len, copy_offset) = search(&mut tree, &copy_buffer, copy_buffer_idx);
             } else {
