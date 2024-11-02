@@ -198,7 +198,7 @@ fn decompress(cmp: &[u8]) -> Vec<u8> {
     dc
 }
 
-pub fn encrypt_decrypt(key: &[u8; 16], data: &mut [u8]) {
+fn encrypt_decrypt(key: &[u8; 16], data: &mut [u8]) {
     let mut random = Random::new(gen_crc(key));
 
     let flavor1: Vec<u8> = (0..(random.next_int() & 0x7F) + 0x80)
@@ -335,13 +335,19 @@ fn change_parent(tree: &mut [TreeNode], old_idx: usize, new_idx: usize) {
     tree[old_idx].parent = 0x400;
 }
 
-fn search(tree: &mut [TreeNode], copy_buffer: &[u8], new_idx: usize) -> (u8, u16) {
-    let curr = copy_buffer[new_idx];
+fn calc_offset(curr: isize, i: usize) -> isize {
+    ((16 - curr + i as isize) & 0x3ff) + curr - 1024
+}
+
+fn search(tree: &mut [TreeNode], idx: isize, uncomp: &[u8]) -> (u8, u16) {
+    let curr = if idx < 0 { b' ' } else { uncomp[idx as usize] };
+    let new_idx = (idx + 0x3f0) as usize & 0x3ff;
     let mut diff = 1;
     tree[new_idx] = TreeNode::new(new_idx as u16);
     let mut curr_idx = (curr as usize) + 0x401;
     let mut copy_len = 0;
     let mut copy_offset = 0;
+    let end = min(idx + 18, uncomp.len() as isize);
 
     if tree[curr_idx].larger == 0x400 {
         tree[curr_idx].larger = new_idx as u16;
@@ -353,9 +359,18 @@ fn search(tree: &mut [TreeNode], copy_buffer: &[u8], new_idx: usize) -> (u8, u16
     loop {
         let mut curr_copy_len = 18;
         for i in 1..18 {
-            let idx_new = new_idx + i;
-            let idx_curr = tree[curr_idx].val as usize + i;
-            diff = copy_buffer[idx_new] as i32 - copy_buffer[idx_curr] as i32;
+            let idx_new = calc_offset(end, new_idx + i);
+            let idx_curr = calc_offset(end, tree[curr_idx].val as usize + i);
+            diff = (if idx_new < 0 {
+                b' '
+            } else {
+                uncomp[idx_new as usize]
+            }) as i32
+                - (if idx_curr < 0 {
+                    b' '
+                } else {
+                    uncomp[idx_curr as usize]
+                }) as i32;
             if diff != 0 {
                 curr_copy_len = i as u8;
                 break;
@@ -400,24 +415,16 @@ fn insert_node(tree: &mut [TreeNode], new_idx: usize, curr_idx: usize) {
 }
 
 fn compress_lzss(uncomp: &[u8]) -> Vec<u8> {
-    let mut comp = Vec::new();
-    comp.reserve(uncomp.len());
-    let mut tree: [TreeNode; 1281] = from_fn(|i| TreeNode::new(i as u16));
-    let mut copy_buffer = [0x20u8; 1024 + 17];
+    let mut comp = Vec::with_capacity(uncomp.len());
+    let mut tree: [TreeNode; 1024 + 1 + 256] = from_fn(|i| TreeNode::new(i as u16));
     let mut op_idx = 0;
     let mut op_code = 0;
-    let mut copy_len = 0;
-    let mut copy_offset = 0;
 
-    for i in 0..min(18, uncomp.len()) {
-        copy_buffer[(i + 0x3f0) & 0x3ff] = uncomp[i];
-        copy_buffer[i + 0x3f0] = uncomp[i];
+    for i in -18..0 {
+        search(&mut tree, i, uncomp);
     }
 
-    for i in 0x3de..0x3f1 {
-        (copy_len, copy_offset) = search(&mut tree, &copy_buffer, i);
-    }
-
+    let (mut copy_len, mut copy_offset) = search(&mut tree, 0, uncomp);
     let mut i = 0;
     while i < uncomp.len() {
         copy_len = min(copy_len as usize, uncomp.len() - i) as u8;
@@ -439,14 +446,10 @@ fn compress_lzss(uncomp: &[u8]) -> Vec<u8> {
         }
 
         for _ in 0..copy_len {
+            delete_node(&mut tree, (i + 2) & 0x3ff);
             i += 1;
-            delete_node(&mut tree, (i + 1) & 0x3ff);
-            if i + 17 < uncomp.len() {
-                copy_buffer[(i + 1) & 0x3ff] = uncomp[i + 17];
-                copy_buffer[((i + 0x3f0) & 0x3ff) + 17] = uncomp[i + 17];
-            }
             if i < uncomp.len() {
-                (copy_len, copy_offset) = search(&mut tree, &copy_buffer, (i + 0x3f0) & 0x3ff);
+                (copy_len, copy_offset) = search(&mut tree, i as isize, uncomp);
             }
         }
     }
