@@ -1,5 +1,4 @@
 use rayon::prelude::*;
-use std::array::from_fn;
 use std::cmp::min;
 use std::env;
 use std::path::Path;
@@ -277,17 +276,16 @@ fn decrypt(
     Ok(res)
 }
 
+#[derive(Copy, Clone)]
 struct TreeNode {
-    val: u16,
     parent: u16,
     larger: u16,
     smaller: u16,
 }
 
 impl TreeNode {
-    fn new(val: u16) -> Self {
+    fn new() -> Self {
         TreeNode {
-            val,
             parent: 0x400,
             larger: 0x400,
             smaller: 0x400,
@@ -336,15 +334,15 @@ fn change_parent(tree: &mut [TreeNode], old_idx: usize, new_idx: usize) {
 }
 
 fn calc_offset(curr: isize, i: usize) -> isize {
-    ((16 - curr + i as isize) & 0x3ff) + curr - 1024
+    ((i as isize - curr) & 0x3ff) + curr - 1024
 }
 
 fn search(tree: &mut [TreeNode], idx: isize, uncomp: &[u8]) -> (u8, u16) {
     let curr = if idx < 0 { b' ' } else { uncomp[idx as usize] };
-    let new_idx = (idx + 0x3f0) as usize & 0x3ff;
+    let new_idx = (idx & 0x3ff) as usize;
     let mut diff = 1;
-    tree[new_idx] = TreeNode::new(new_idx as u16);
-    let mut curr_idx = (curr as usize) + 0x401;
+    tree[new_idx] = TreeNode::new();
+    let mut curr_idx = (curr as usize) + 0x400 + 1;
     let mut copy_len = 0;
     let mut copy_offset = 0;
     let end = min(idx + 18, uncomp.len() as isize);
@@ -360,7 +358,7 @@ fn search(tree: &mut [TreeNode], idx: isize, uncomp: &[u8]) -> (u8, u16) {
         let mut curr_copy_len = min(18, uncomp.len() as isize - idx) as u8;
         for i in 1..min(18, uncomp.len() as isize - idx) as usize {
             let idx_new = calc_offset(end, new_idx + i);
-            let idx_curr = calc_offset(end, tree[curr_idx].val as usize + i);
+            let idx_curr = calc_offset(end, curr_idx as usize + i);
             diff = (if idx_new < 0 {
                 b' '
             } else {
@@ -416,14 +414,14 @@ fn insert_node(tree: &mut [TreeNode], new_idx: usize, curr_idx: usize) {
 
 fn compress_lzss(uncomp: &[u8]) -> Vec<u8> {
     let mut comp = Vec::with_capacity(uncomp.len());
-    let mut tree: [TreeNode; 1024 + 1 + 256] = from_fn(|i| TreeNode::new(i as u16));
+    let mut tree = [TreeNode::new(); 1024 + 1 + 256];
     let mut op_idx = 0;
     let mut op_code = 0;
     let mut consume = 18;
 
     for i in -18..uncomp.len() as isize {
+        delete_node(&mut tree, ((i + 17) & 0x3ff) as usize);
         let (copy_len, copy_offset) = search(&mut tree, i as isize, uncomp);
-        delete_node(&mut tree, ((i + 2) & 0x3ff) as usize);
         if consume == 0 {
             op_code <<= 1;
             if op_code == 0 {
@@ -437,8 +435,8 @@ fn compress_lzss(uncomp: &[u8]) -> Vec<u8> {
                 comp[op_idx] |= op_code;
                 comp.push(uncomp[i as usize]);
             } else {
-                comp.push(copy_offset as u8);
-                comp.push((copy_offset >> 4) as u8 & 0xf0 | copy_len - 3);
+                comp.push(copy_offset as u8 + 0xf0);
+                comp.push(((copy_offset + 0x3f0) >> 4) as u8 & 0xf0 | copy_len - 3);
                 consume = copy_len;
             }
         }
