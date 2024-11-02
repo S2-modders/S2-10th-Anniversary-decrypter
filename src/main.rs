@@ -357,8 +357,8 @@ fn search(tree: &mut [TreeNode], idx: isize, uncomp: &[u8]) -> (u8, u16) {
     curr_idx = tree[curr_idx].larger as usize;
 
     loop {
-        let mut curr_copy_len = 18;
-        for i in 1..18 {
+        let mut curr_copy_len = min(18, uncomp.len() as isize - idx) as u8;
+        for i in 1..min(18, uncomp.len() as isize - idx) as usize {
             let idx_new = calc_offset(end, new_idx + i);
             let idx_curr = calc_offset(end, tree[curr_idx].val as usize + i);
             diff = (if idx_new < 0 {
@@ -419,39 +419,30 @@ fn compress_lzss(uncomp: &[u8]) -> Vec<u8> {
     let mut tree: [TreeNode; 1024 + 1 + 256] = from_fn(|i| TreeNode::new(i as u16));
     let mut op_idx = 0;
     let mut op_code = 0;
+    let mut consume = 18;
 
-    for i in -18..0 {
-        search(&mut tree, i, uncomp);
-    }
+    for i in -18..uncomp.len() as isize {
+        let (copy_len, copy_offset) = search(&mut tree, i as isize, uncomp);
+        delete_node(&mut tree, ((i + 2) & 0x3ff) as usize);
+        if consume == 0 {
+            op_code <<= 1;
+            if op_code == 0 {
+                op_idx = comp.len();
+                comp.push(0);
+                op_code = 1;
+            }
 
-    let (mut copy_len, mut copy_offset) = search(&mut tree, 0, uncomp);
-    let mut i = 0;
-    while i < uncomp.len() {
-        copy_len = min(copy_len as usize, uncomp.len() - i) as u8;
-
-        op_code <<= 1;
-        if op_code == 0 {
-            op_idx = comp.len();
-            comp.push(0);
-            op_code = 1;
-        }
-
-        if copy_len < 3 {
-            copy_len = 1;
-            comp[op_idx] |= op_code;
-            comp.push(uncomp[i]);
-        } else {
-            comp.push(copy_offset as u8);
-            comp.push((copy_offset >> 4) as u8 & 0xf0 | copy_len - 3);
-        }
-
-        for _ in 0..copy_len {
-            delete_node(&mut tree, (i + 2) & 0x3ff);
-            i += 1;
-            if i < uncomp.len() {
-                (copy_len, copy_offset) = search(&mut tree, i as isize, uncomp);
+            if copy_len < 3 {
+                consume = 1;
+                comp[op_idx] |= op_code;
+                comp.push(uncomp[i as usize]);
+            } else {
+                comp.push(copy_offset as u8);
+                comp.push((copy_offset >> 4) as u8 & 0xf0 | copy_len - 3);
+                consume = copy_len;
             }
         }
+        consume -= 1;
     }
     comp
 }
