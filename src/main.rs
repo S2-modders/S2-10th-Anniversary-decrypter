@@ -342,7 +342,7 @@ fn search(tree: &mut [TreeNode], idx: isize, uncomp: &[u8]) -> (u8, u16) {
     let new_idx = (idx & 0x3ff) as usize;
     let mut diff = 1;
     tree[new_idx] = TreeNode::new();
-    let mut curr_idx = (curr as usize) + 0x400 + 1;
+    let mut curr_idx = curr as usize + 0x400 + 1;
     let mut copy_len = 0;
     let mut copy_offset = 0;
     let end = min(idx + 18, uncomp.len() as isize);
@@ -532,8 +532,8 @@ mod tests {
                     let res = decrypt(file.0.display(), &key, header, &mut file.1[20..])?;
                     let mut contents = encrypt(&key, &res, header.game);
                     assert_eq!(header, Header::from(&contents)?);
-                    let _ = decrypt(file.0.display(), &key, header, &mut contents[20..])?;
-                    return Ok(file.1.len() as isize - 20 - contents.len() as isize);
+                    decrypt(file.0.display(), &key, header, &mut contents[20..])?;
+                    return Ok(file.1.len() as isize - contents.len() as isize);
                 }
                 Ok(0)
             })
