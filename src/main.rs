@@ -2,6 +2,7 @@ use rayon::prelude::*;
 use std::cmp::min;
 use std::env;
 use std::path::Path;
+use std::slice::from_raw_parts;
 use walkdir::WalkDir;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -127,16 +128,7 @@ const RNUM3: [u32; 256] = include_bytes_plus::include_bytes!("rnum3.bin" as u32)
 fn gen_crc(data: &[u8]) -> u32 {
     let mut i = 0;
     let mut div = 0xffffffff;
-    let int_data: Vec<u32> = data
-        .chunks(4)
-        .filter_map(|chunk| {
-            if chunk.len() == 4 {
-                Some(u32::from_le_bytes(chunk.try_into().unwrap()))
-            } else {
-                None
-            }
-        })
-        .collect();
+    let int_data = unsafe { from_raw_parts(data.as_ptr() as *const u32, data.len() / 4) };
 
     // Process 32 bytes at a time
     while i + 32 <= data.len() {
