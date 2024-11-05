@@ -1,5 +1,4 @@
 use rayon::prelude::*;
-use std::cmp::min;
 use std::env;
 use std::path::Path;
 use std::slice::from_raw_parts;
@@ -325,32 +324,28 @@ fn change_parent(tree: &mut [TreeNode], old_idx: usize, new_idx: usize) {
     tree[old_idx].parent = 0x400;
 }
 
-fn calc_offset(curr: usize, i: usize) -> usize {
-    ((i - curr) & 0x3ff) + curr - 1024
-}
-
 fn search(tree: &mut [TreeNode], idx: usize, uncomp: &[u8]) -> (u8, u16) {
-    let this = idx & 0x3ff;
+    if idx + 18 > uncomp.len() {
+        return (0, 0);
+    }
     let mut diff = 1;
-    tree[this] = TreeNode::new();
+    tree[idx & 0x3ff] = TreeNode::new();
     let mut curr = uncomp[idx] as usize + 0x400 + 1;
     let mut copy_len = 0;
     let mut copy_offset = 0;
-    let end = min(idx + 18, uncomp.len());
-    let idx_new = calc_offset(end, idx);
 
     if tree[curr].larger == 0x400 {
-        tree[curr].larger = this as u16;
-        tree[this].parent = curr as u16;
+        tree[curr].larger = (idx & 0x3ff) as u16;
+        tree[idx & 0x3ff].parent = curr as u16;
         return (copy_len, copy_offset);
     }
     curr = tree[curr].larger as usize;
 
     loop {
-        let mut curr_copy_len = (end - idx) as u8;
-        let idx_curr = calc_offset(end, curr);
-        for i in 1..end - idx {
-            diff = uncomp[idx_new + i] as i32 - uncomp[idx_curr + i] as i32;
+        let mut curr_copy_len = 18;
+        let idx_curr = ((curr - idx) & 0x3ff) + idx - 1024;
+        for i in 1..18 {
+            diff = uncomp[idx + i] as i32 - uncomp[idx_curr + i] as i32;
             if diff != 0 {
                 curr_copy_len = i as u8;
                 break;
@@ -361,25 +356,25 @@ fn search(tree: &mut [TreeNode], idx: usize, uncomp: &[u8]) -> (u8, u16) {
             copy_len = curr_copy_len;
             copy_offset = curr as u16;
             if curr_copy_len == 18 {
-                insert_node(tree, this, curr);
+                insert_node(tree, idx & 0x3ff, curr);
                 return (copy_len, copy_offset);
             }
         }
 
-        if diff < 0 {
-            if tree[curr].smaller == 0x400 {
-                tree[curr].smaller = this as u16;
-                tree[this].parent = curr as u16;
-                return (copy_len, copy_offset);
-            }
-            curr = tree[curr].smaller as usize;
-        } else {
+        if diff > 0 {
             if tree[curr].larger == 0x400 {
-                tree[curr].larger = this as u16;
-                tree[this].parent = curr as u16;
+                tree[curr].larger = (idx & 0x3ff) as u16;
+                tree[idx & 0x3ff].parent = curr as u16;
                 return (copy_len, copy_offset);
             }
             curr = tree[curr].larger as usize;
+        } else {
+            if tree[curr].smaller == 0x400 {
+                tree[curr].smaller = (idx & 0x3ff) as u16;
+                tree[idx & 0x3ff].parent = curr as u16;
+                return (copy_len, copy_offset);
+            }
+            curr = tree[curr].smaller as usize;
         }
     }
 }
