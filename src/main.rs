@@ -12,12 +12,21 @@ enum Game {
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 struct Header {
     game: Game,
-    file_content_crc: u32,
-    file_name_crc: u32,
-    file_size: usize,
+    file_crc: u32,
+    name_crc: u32,
+    size: usize,
 }
 
 impl Header {
+    fn new(game: Game, file_crc: u32, name_crc: u32, size: usize) -> Self {
+        Self {
+            game,
+            file_crc,
+            name_crc,
+            size,
+        }
+    }
+
     fn from(vec: &[u8]) -> Result<Header, String> {
         if vec.len() < 20 {
             return Err(format!(
@@ -25,19 +34,9 @@ impl Header {
                 vec.len()
             ));
         }
-        let header: Vec<u32> = vec
-            .chunks(4)
-            .take(5)
-            .map(|chunk| chunk.try_into())
-            .filter_map(Result::ok)
-            .map(|chunk| u32::from_le_bytes(chunk))
-            .collect();
-
+        let header = unsafe { from_raw_parts(vec.as_ptr() as *const u32, 5) };
         let magic = header[0];
         let fcc = header[1];
-        let file_content_crc = header[2];
-        let file_name_crc = header[3];
-        let file_size = header[4] as usize;
         if magic != 0x06091812 {
             return Err(format!(
                 "Not an encrypted file: magic does not match: {magic:#x} != 0x6091812"
@@ -48,12 +47,7 @@ impl Header {
             0x30306372 => Game::DNG,
             _ => return Err(format!("No matching game header found for fcc {fcc:#x}")),
         };
-        Ok(Header {
-            game,
-            file_content_crc,
-            file_name_crc,
-            file_size,
-        })
+        Ok(Header::new(game, header[2], header[3], header[4] as usize))
     }
 
     fn add_to(&self, content: &mut Vec<u8>) {
@@ -61,15 +55,14 @@ impl Header {
             Game::ADK => 0x6b646173,
             Game::DNG => 0x30306372,
         };
-        let size = self.file_size as u32;
         content.splice(
             0..0,
             [
                 0x06091812,
                 fcc,
-                self.file_content_crc,
-                self.file_name_crc,
-                size,
+                self.file_crc,
+                self.name_crc,
+                self.size as u32,
             ]
             .iter()
             .flat_map(|num| num.to_le_bytes()),
@@ -77,34 +70,31 @@ impl Header {
     }
 }
 
-pub struct Random {
+struct Random {
     seed: u32,
 }
 impl Random {
-    pub fn new(crc: u32) -> Self {
-        let r_bit_positions: [u32; 8] = [0xC, 0x17, 0xA, 0x19, 0x8, 0x1B, 0x6, 0x1D];
+    fn new(crc: u32) -> Self {
+        const RANDOM_INT_POS: [u32; 8] = [0xC, 0x17, 0xA, 0x19, 0x8, 0x1B, 0x6, 0x1D];
         let mut seed = crc & 0x7fffffff;
 
-        let population = seed.count_ones();
-
+        let population = seed.count_ones() as usize;
         // Set bits
-        for i in 0..8 - population as i32 {
-            seed |= 1 << r_bit_positions[i as usize];
+        for i in population..8 {
+            seed |= 1 << RANDOM_INT_POS[i - population];
         }
-
         // Remove bits
-        if population > 24 {
-            for i in 0..32 - population {
-                seed &= !(1 << r_bit_positions[i as usize]);
-            }
+        for i in 24..population {
+            seed &= !(1 << RANDOM_INT_POS[i - 24]);
         }
 
-        seed = if seed == 0 { 1 } else { seed & 0x7fffffff };
-
+        if seed == 0 {
+            seed = 1;
+        }
         Random { seed }
     }
 
-    pub fn next_int(&mut self) -> u32 {
+    fn next_int(&mut self) -> u32 {
         let upper = (self.seed >> 0x10) * 0x41A7;
         let lower = (self.seed & 0xFFFF) * 0x41A7;
         self.seed = lower + (upper & 0x7FFF) * 0x10000;
@@ -125,43 +115,18 @@ const RNUM1: [u32; 256] = include_bytes_plus::include_bytes!("rnum1.bin" as u32)
 const RNUM2: [u32; 256] = include_bytes_plus::include_bytes!("rnum2.bin" as u32);
 const RNUM3: [u32; 256] = include_bytes_plus::include_bytes!("rnum3.bin" as u32);
 fn gen_crc(data: &[u8]) -> u32 {
-    let mut i = 0;
     let mut div = 0xffffffff;
     let int_data = unsafe { from_raw_parts(data.as_ptr() as *const u32, data.len() / 4) };
-
-    // Process 32 bytes at a time
-    while i + 32 <= data.len() {
-        div ^= int_data[i / 4];
-        for j in 1..8 {
-            div = RNUM0[(div >> 24) as usize]
-                ^ RNUM1[((div >> 16) & 0xff) as usize]
-                ^ RNUM2[((div >> 8) & 0xff) as usize]
-                ^ RNUM3[(div & 0xff) as usize]
-                ^ int_data[j + i / 4];
-        }
+    for i in 0..int_data.len() {
+        div ^= int_data[i];
         div = RNUM0[(div >> 24) as usize]
             ^ RNUM1[((div >> 16) & 0xff) as usize]
             ^ RNUM2[((div >> 8) & 0xff) as usize]
             ^ RNUM3[(div & 0xff) as usize];
-        i += 32;
     }
-
-    // Process remaining 4 bytes at a time
-    while i + 4 <= data.len() {
-        div ^= int_data[i / 4];
-        div = RNUM0[(div >> 24) as usize]
-            ^ RNUM1[((div >> 16) & 0xff) as usize]
-            ^ RNUM2[((div >> 8) & 0xff) as usize]
-            ^ RNUM3[(div & 0xff) as usize];
-        i += 4;
+    for i in data.len() & !3..data.len() {
+        div = (div >> 8) ^ RNUM0[(data[i] ^ div as u8) as usize];
     }
-
-    // Process remaining bytes one at a time
-    while i < data.len() {
-        div = (div >> 8) ^ RNUM0[(data[i] ^ (div as u8)) as usize];
-        i += 1;
-    }
-
     !div
 }
 
@@ -176,10 +141,9 @@ fn decompress(cmp: &[u8]) -> Vec<u8> {
             dc.push(curr);
             mode >>= 1;
         } else if let Some(&next) = iter.next() {
-            let c = (16 - dc.len() as isize + curr as isize + (((next & 0xf0) as isize) << 4)
-                & 0x3ff) as usize
-                + dc.len();
-            for i in 0..(next & 0xf) as usize + 3 {
+            let num = curr as usize + ((next as usize & 0x30) << 4);
+            let c = (num - dc.len() - 0x3f0 & 0x3ff) + dc.len();
+            for i in 0..3 + (next as usize & 0xf) {
                 dc.push(if c + i < 1024 { b' ' } else { dc[c + i - 1024] });
             }
             mode >>= 1;
@@ -222,8 +186,7 @@ fn make_key(filepath: &Path, game: Game) -> [u8; 16] {
         .to_str()
         .unwrap()
         .to_ascii_lowercase();
-    let encoding = encoding_rs::WINDOWS_1252;
-    let (encoded, _, _) = encoding.encode(&filename);
+    let (encoded, _, _) = encoding_rs::WINDOWS_1252.encode(&filename);
 
     if filepath.extension().unwrap() == "s2m" || filepath.extension().unwrap() == "sav" {
         return key;
@@ -242,26 +205,26 @@ fn decrypt(
     contents: &mut [u8],
 ) -> Result<Vec<u8>, String> {
     let crc = gen_crc(key);
-    if crc != header.file_name_crc {
+    if crc != header.name_crc {
         return Err(format!(
             "file name crc mismatch: {crc:#x} != {:#x} in {path}",
-            header.file_name_crc
+            header.name_crc
         ));
     }
     encrypt_decrypt(key, contents);
     let res = decompress(contents);
     let file_crc = gen_crc(&res);
-    if res.len() != header.file_size {
+    if res.len() != header.size {
         return Err(format!(
             "file size mismatch: {} != {} in {path}",
             res.len(),
-            header.file_size,
+            header.size,
         ));
     }
-    if file_crc != header.file_content_crc {
+    if file_crc != header.file_crc {
         return Err(format!(
             "file data crc mismatch: {file_crc:#x} != {:#x} in {path}",
-            header.file_content_crc,
+            header.file_crc,
         ));
     }
     Ok(res)
@@ -424,18 +387,8 @@ fn compress_lzss(uncomp: &[u8]) -> Vec<u8> {
 
 fn encrypt(key: &[u8; 16], contents: &[u8], game: Game) -> Vec<u8> {
     let mut comp = compress_lzss(contents);
-
     encrypt_decrypt(key, &mut comp);
-    let file_content_crc = gen_crc(contents);
-    let file_name_crc = gen_crc(key);
-    let file_size = contents.len();
-    let header = Header {
-        game,
-        file_content_crc,
-        file_name_crc,
-        file_size,
-    };
-    header.add_to(&mut comp);
+    Header::new(game, gen_crc(contents), gen_crc(key), contents.len()).add_to(&mut comp);
     comp
 }
 
