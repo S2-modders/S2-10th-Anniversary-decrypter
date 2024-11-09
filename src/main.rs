@@ -95,17 +95,8 @@ impl Random {
     }
 
     fn next_int(&mut self) -> u32 {
-        let upper = (self.seed >> 0x10) * 0x41A7;
-        let lower = (self.seed & 0xFFFF) * 0x41A7;
-        self.seed = lower + (upper & 0x7FFF) * 0x10000;
-
-        if self.seed > 0x7FFFFFFF {
-            self.seed = (self.seed & 0x7FFFFFFF) + 1;
-        }
-        self.seed += upper >> 15;
-        if self.seed > 0x7FFFFFFF {
-            self.seed = (self.seed & 0x7FFFFFFF) + 1;
-        }
+        let mul = (self.seed as u64) * 0x41a7;
+        self.seed = (mul as u32 & 0x7fffffff) + (mul >> 31) as u32;
         self.seed
     }
 }
@@ -141,8 +132,8 @@ fn decompress(cmp: &[u8]) -> Vec<u8> {
             dc.push(curr);
             mode >>= 1;
         } else if let Some(&next) = iter.next() {
-            let num = curr as usize + ((next as usize & 0x30) << 4);
-            let c = (num - dc.len() - 0x3f0 & 0x3ff) + dc.len();
+            let num = curr as isize + ((next as isize & 0x30) << 4);
+            let c = (num - dc.len() as isize - 0x3f0 & 0x3ff) as usize + dc.len();
             for i in 0..3 + (next as usize & 0xf) {
                 dc.push(if c + i < 1024 { b' ' } else { dc[c + i - 1024] });
             }
@@ -306,7 +297,7 @@ fn search(tree: &mut [TreeNode], idx: usize, uncomp: &[u8]) -> (u8, u16) {
 
     loop {
         let mut curr_copy_len = 18;
-        let idx_curr = ((curr - idx) & 0x3ff) + idx - 1024;
+        let idx_curr = (curr as isize - idx as isize & 0x3ff) as usize + idx - 1024;
         for i in 1..18 {
             diff = uncomp[idx + i] as i32 - uncomp[idx_curr + i] as i32;
             if diff != 0 {
@@ -375,7 +366,7 @@ fn compress_lzss(uncomp: &[u8]) -> Vec<u8> {
                 comp[op_idx] |= op_code;
                 comp.push(uncomp[i]);
             } else {
-                comp.push(copy_offset as u8 + 0xf0);
+                comp.push((copy_offset + 0x3f0) as u8);
                 comp.push(((copy_offset + 0x3f0) >> 4) as u8 & 0xf0 | copy_len - 3);
                 consume = copy_len;
             }
