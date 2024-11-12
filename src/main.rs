@@ -87,10 +87,6 @@ impl Random {
         for i in 24..population {
             seed &= !(1 << RANDOM_INT_POS[i - 24]);
         }
-
-        if seed == 0 {
-            seed = 1;
-        }
         Random { seed }
     }
 
