@@ -15,7 +15,7 @@ struct Header {
     game: Game,
     file_crc: u32,
     name_crc: u32,
-    size: usize,
+    size: u32,
 }
 
 #[derive(Error, Debug)]
@@ -30,11 +30,11 @@ enum FormatError {
 #[derive(Error, Debug)]
 enum DecryptError {
     #[error("file name crc mismatch: {0:#x} != {1:#x}")]
-    FileNameCrcMismatch(u32, u32),
+    NameCrcMismatch(u32, u32),
     #[error("file name crc mismatch: {0:#x} != {1:#x}")]
     FileCrcMismatch(u32, u32),
     #[error("file size mismatch: {0} != {1}")]
-    FileSizeMismatch(usize, usize),
+    SizeMismatch(u32, u32),
 }
 #[derive(Error, Debug)]
 enum CryptError {
@@ -47,7 +47,7 @@ enum CryptError {
 }
 
 impl Header {
-    fn new(game: Game, file_crc: u32, name_crc: u32, size: usize) -> Self {
+    fn new(game: Game, file_crc: u32, name_crc: u32, size: u32) -> Self {
         Self {
             game,
             file_crc,
@@ -71,7 +71,7 @@ impl Header {
             0x30306372 => Game::DNG,
             _ => return Err(FormatError::NoGameFccFound(fcc)),
         };
-        Ok(Header::new(game, header[2], header[3], header[4] as usize))
+        Ok(Header::new(game, header[2], header[3], header[4]))
     }
 
     fn add_to(&self, content: &mut Vec<u8>) {
@@ -81,15 +81,9 @@ impl Header {
         };
         content.splice(
             0..0,
-            [
-                0x06091812,
-                fcc,
-                self.file_crc,
-                self.name_crc,
-                self.size as u32,
-            ]
-            .iter()
-            .flat_map(|num| num.to_le_bytes()),
+            [0x06091812, fcc, self.file_crc, self.name_crc, self.size]
+                .iter()
+                .flat_map(|num| num.to_le_bytes()),
         );
     }
 }
@@ -212,13 +206,13 @@ fn make_key(filepath: &Path, game: Game) -> [u8; 16] {
 fn decrypt(key: &[u8; 16], header: Header, contents: &mut [u8]) -> Result<Vec<u8>, DecryptError> {
     let crc = gen_crc(key);
     if crc != header.name_crc {
-        return Err(DecryptError::FileNameCrcMismatch(crc, header.name_crc));
+        return Err(DecryptError::NameCrcMismatch(crc, header.name_crc));
     }
     encrypt_decrypt(key, contents);
     let res = decompress(contents);
     let file_crc = gen_crc(&res);
-    if res.len() != header.size {
-        return Err(DecryptError::FileSizeMismatch(res.len(), header.size));
+    if res.len() != header.size.try_into().unwrap() {
+        return Err(DecryptError::SizeMismatch(res.len() as u32, header.size));
     }
     if file_crc != header.file_crc {
         return Err(DecryptError::FileCrcMismatch(file_crc, header.file_crc));
@@ -384,7 +378,7 @@ fn compress_lzss(uncomp: &[u8]) -> Vec<u8> {
 fn encrypt(key: &[u8; 16], contents: &[u8], game: Game) -> Vec<u8> {
     let mut comp = compress_lzss(contents);
     encrypt_decrypt(key, &mut comp);
-    Header::new(game, gen_crc(contents), gen_crc(key), contents.len()).add_to(&mut comp);
+    Header::new(game, gen_crc(contents), gen_crc(key), contents.len() as u32).add_to(&mut comp);
     comp
 }
 
