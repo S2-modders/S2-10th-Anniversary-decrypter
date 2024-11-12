@@ -5,19 +5,6 @@ use std::slice::from_raw_parts;
 use thiserror::Error;
 use walkdir::WalkDir;
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-enum Game {
-    DNG,
-    ADK,
-}
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-struct Header {
-    game: Game,
-    file_crc: u32,
-    name_crc: u32,
-    size: u32,
-}
-
 #[derive(Error, Debug)]
 enum FormatError {
     #[error("File too short to have a proper header: {0} < 20")]
@@ -46,6 +33,18 @@ enum CryptError {
     IOError(#[from] std::io::Error),
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum Game {
+    DNG,
+    ADK,
+}
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+struct Header {
+    game: Game,
+    file_crc: u32,
+    name_crc: u32,
+    size: u32,
+}
 impl Header {
     fn new(game: Game, file_crc: u32, name_crc: u32, size: u32) -> Self {
         Self {
@@ -385,12 +384,10 @@ fn encrypt(key: &[u8; 16], contents: &[u8], game: Game) -> Vec<u8> {
 fn main() {
     env::args()
         .collect::<Vec<String>>()
-        .par_iter()
-        .map(Path::new)
-        .map(WalkDir::new)
-        .map(WalkDir::into_iter)
-        .map(|iter| iter.par_bridge())
-        .flatten()
+        .into_iter()
+        .skip(1)
+        .flat_map(WalkDir::new)
+        .par_bridge()
         .filter_map(Result::ok)
         .filter(|entry| entry.file_type().is_file())
         .map(|entry| entry.path().to_path_buf())
@@ -436,12 +433,10 @@ mod tests {
     fn is_valid() {
         let saved = env::args()
             .collect::<Vec<String>>()
-            .par_iter()
-            .map(Path::new)
-            .map(WalkDir::new)
-            .map(WalkDir::into_iter)
-            .map(|iter| iter.par_bridge())
-            .flatten()
+            .into_iter()
+            .skip(1)
+            .flat_map(WalkDir::new)
+            .par_bridge()
             .filter_map(Result::ok)
             .filter(|entry| entry.file_type().is_file())
             .map(|entry| entry.path().to_path_buf())
