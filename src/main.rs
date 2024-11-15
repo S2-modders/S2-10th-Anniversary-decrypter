@@ -280,6 +280,7 @@ fn search(tree: &mut [TreeNode], idx: usize, uncomp: &[u8]) -> (u8, u16) {
     if idx + 18 > uncomp.len() {
         return (0, 0);
     }
+    delete_node(tree, (idx + 17) & 0x3ff);
     let mut diff = 1;
     tree[idx & 0x3ff] = TreeNode::new();
     let mut curr = uncomp[idx] as usize + 0x400 + 1;
@@ -349,7 +350,6 @@ fn compress_lzss(uncomp: &[u8]) -> Vec<u8> {
     let mut consume = 0;
 
     for i in 0..uncomp.len() {
-        delete_node(&mut tree, (i + 17) & 0x3ff);
         let (copy_len, copy_offset) = search(&mut tree, i, uncomp);
         if consume == 0 {
             op_code <<= 1;
