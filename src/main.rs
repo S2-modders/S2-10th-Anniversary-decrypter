@@ -91,14 +91,13 @@ const RNUM1: [u32; 256] = include_bytes_plus::include_bytes!("rnum1.bin" as u32)
 const RNUM2: [u32; 256] = include_bytes_plus::include_bytes!("rnum2.bin" as u32);
 const RNUM3: [u32; 256] = include_bytes_plus::include_bytes!("rnum3.bin" as u32);
 fn gen_crc(data: &[u8]) -> u32 {
-    let mut div = 0xffffffff;
-    let int_data = unsafe { from_raw_parts(data.as_ptr() as *const u32, data.len() / 4) };
-    for i in 0..int_data.len() {
-        div ^= int_data[i];
-        div = RNUM0[(div >> 24) as usize]
-            ^ RNUM1[((div >> 16) & 0xff) as usize]
-            ^ RNUM2[((div >> 8) & 0xff) as usize]
-            ^ RNUM3[(div & 0xff) as usize];
+    let mut div = 0xffffffffu32;
+    for i in (0..data.len() & !3).step_by(4) {
+        let tmp = div.to_le_bytes();
+        div = RNUM0[(tmp[3] ^ data[i + 3]) as usize]
+            ^ RNUM1[(tmp[2] ^ data[i + 2]) as usize]
+            ^ RNUM2[(tmp[1] ^ data[i + 1]) as usize]
+            ^ RNUM3[(tmp[0] ^ data[i]) as usize];
     }
     for i in data.len() & !3..data.len() {
         div = (div >> 8) ^ RNUM0[(data[i] ^ div as u8) as usize];
