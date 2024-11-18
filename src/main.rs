@@ -157,22 +157,21 @@ fn encrypt_decrypt(key: [u8; 16], data: &mut [u8]) {
     }
 }
 
-fn make_key(filepath: &Path, game: Game) -> [u8; 16] {
+fn make_key(file_path: &Path, game: Game) -> [u8; 16] {
     let key = match game {
         Game::ADK => 0xbd8cc2bd30674bf8b49b1bf9f6822ef4u128.to_be_bytes(),
         Game::DNG => 0xc95946cad9f04f0aa100aab8cbe8db6bu128.to_be_bytes(),
     };
-    if filepath.extension().unwrap() == "s2m" || filepath.extension().unwrap() == "sav" {
-        return key;
-    }
-    let filename = filepath
+    let file_name = file_path
         .file_name()
         .and_then(|s| s.to_str())
         .unwrap()
         .to_ascii_lowercase();
-    let (encoded, _, _) = encoding_rs::WINDOWS_1252.encode(&filename);
-    let mut rng = Random::new(gen_crc(&encoded));
-    key.map(|byte| byte ^ rng.next_int() as u8)
+    let mut rng = Random::new(gen_crc(&encoding_rs::WINDOWS_1252.encode(&file_name).0));
+    match &file_name[file_name.len() - 4..file_name.len()] {
+        ".s2m" | ".sav" => return key,
+        _ => key.map(|byte| byte ^ rng.next_int() as u8),
+    }
 }
 
 fn decrypt(key: [u8; 16], header: Header, contents: &mut [u8]) -> Result<Vec<u8>, DecryptError> {
