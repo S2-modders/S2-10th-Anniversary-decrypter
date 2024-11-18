@@ -158,7 +158,7 @@ fn make_key(file_path: &Path, game: Game) -> [u8; 16] {
         .unwrap()
         .to_ascii_lowercase();
     let mut rng = Random::new(gen_crc(&encoding_rs::WINDOWS_1252.encode(&file_name).0));
-    match &file_name[file_name.len() - 4..file_name.len()] {
+    match &file_name[file_name.len() - 4..] {
         ".s2m" | ".sav" => return key,
         _ => key.map(|byte| byte ^ rng.next_int() as u8),
     }
@@ -367,46 +367,41 @@ fn main() {
         .map(|file| (file.clone(), std::fs::read(file).unwrap()))
         .for_each(|mut file| {
             if let Ok(header) = Header::try_from(file.1.as_slice()) {
-                let path = file.0.display();
                 let ext = match header.game {
                     Game::ADK => "adk.",
                     Game::DNG => "dng.",
                 };
                 let key = make_key(&file.0, header.game);
                 let res = decrypt(key, header, &mut file.1[20..])
-                    .map_err(|e| format!("Error occurred while decrypting {path}:\n{e}"))
+                    .map_err(|e| {
+                        format!("Error occurred while decrypting {}:\n{e}", file.0.display())
+                    })
                     .unwrap();
 
                 file.0
                     .set_extension(ext.to_owned() + file.0.extension().unwrap().to_str().unwrap());
-                let new_path = file.0.display();
                 std::fs::write(&file.0, &res)
-                    .unwrap_or_else(|_| panic!("could not write to {new_path}"));
+                    .unwrap_or_else(|_| panic!("could not write to {}", file.0.display()));
             } else {
                 let file_stem = file.0.file_stem().unwrap().to_str().unwrap();
-                let game = if file_stem.ends_with(".adk") {
-                    Game::ADK
-                } else if file_stem.ends_with(".dng") {
-                    Game::DNG
-                } else {
-                    return;
+                let game = match &file_stem[file_stem.len() - 4..] {
+                    ".adk" => Game::ADK,
+                    ".dng" => Game::DNG,
+                    _ => return,
                 };
                 file.0.set_file_name(
-                    file_stem[..file_stem.len() - 4].to_owned()
-                        + "."
+                    file_stem[..file_stem.len() - 3].to_owned()
                         + file.0.extension().unwrap().to_str().unwrap(),
                 );
                 let content = encrypt(make_key(&file.0, game), &file.1, game);
-                let new_path = file.0.display();
                 std::fs::write(&file.0, &content)
-                    .unwrap_or_else(|_| panic!("could not write to {new_path}"));
+                    .unwrap_or_else(|_| panic!("could not write to {}", file.0.display()));
             }
         })
 }
 
 #[cfg(test)]
 mod tests {
-
     use super::*;
     #[test]
     fn is_valid() {
