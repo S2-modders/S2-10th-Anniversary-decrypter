@@ -18,7 +18,7 @@ enum FormatError {
 enum DecryptError {
     #[error("file name crc mismatch: {0:#x} != {1:#x}")]
     NameCrcMismatch(u32, u32),
-    #[error("file name crc mismatch: {0:#x} != {1:#x}")]
+    #[error("file crc mismatch: {0:#x} != {1:#x}")]
     FileCrcMismatch(u32, u32),
     #[error("file size mismatch: {0} != {1}")]
     SizeMismatch(u32, u32),
@@ -35,8 +35,8 @@ enum CryptError {
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum Game {
-    DNG,
-    ADK,
+    DNG = 0x30306372,
+    ADK = 0x6b646173,
 }
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 struct Header {
@@ -45,45 +45,26 @@ struct Header {
     name_crc: u32,
     size: u32,
 }
-impl Header {
-    fn new(game: Game, file_crc: u32, name_crc: u32, size: u32) -> Self {
-        Self {
-            game,
-            file_crc,
-            name_crc,
-            size,
-        }
-    }
-
-    fn from(vec: &[u8]) -> Result<Header, FormatError> {
+impl TryFrom<&[u8]> for Header {
+    type Error = FormatError;
+    fn try_from(vec: &[u8]) -> Result<Self, Self::Error> {
         if vec.len() < 20 {
             return Err(FormatError::FileTooShort(vec.len()));
         }
         let header = unsafe { from_raw_parts(vec.as_ptr() as *const u32, 5) };
-        let magic = header[0];
-        let fcc = header[1];
-        if magic != 0x06091812 {
-            return Err(FormatError::NotEncryptedFile(magic));
+        if header[0] != 0x06091812 {
+            return Err(FormatError::NotEncryptedFile(header[0]));
         }
-        let game = match fcc {
-            0x6b646173 => Game::ADK,
-            0x30306372 => Game::DNG,
-            _ => return Err(FormatError::NoGameFccFound(fcc)),
-        };
-        Ok(Header::new(game, header[2], header[3], header[4]))
-    }
-
-    fn add_to(&self, content: &mut Vec<u8>) {
-        let fcc = match self.game {
-            Game::ADK => 0x6b646173,
-            Game::DNG => 0x30306372,
-        };
-        content.splice(
-            0..0,
-            [0x06091812, fcc, self.file_crc, self.name_crc, self.size]
-                .iter()
-                .flat_map(|num| num.to_le_bytes()),
-        );
+        Ok(Header {
+            game: match header[1] {
+                0x6b646173 => Game::ADK,
+                0x30306372 => Game::DNG,
+                fcc => return Err(FormatError::NoGameFccFound(fcc)),
+            },
+            file_crc: header[2],
+            name_crc: header[3],
+            size: header[4],
+        })
     }
 }
 
@@ -156,63 +137,55 @@ fn decompress(cmp: &[u8]) -> Vec<u8> {
     dc
 }
 
-fn encrypt_decrypt(key: &[u8; 16], data: &mut [u8]) {
-    let mut random = Random::new(gen_crc(key));
+fn encrypt_decrypt(key: [u8; 16], data: &mut [u8]) {
+    let mut random = Random::new(gen_crc(&key));
 
     let flavor1: Vec<u8> = (0..(random.next_int() & 0x7F) + 0x80)
         .map(|_| random.next_int() as u8)
         .collect();
-
-    for i in 0..data.len() {
-        data[i] ^= flavor1[i % flavor1.len()];
-    }
+    data.iter_mut()
+        .zip(flavor1.iter().cycle())
+        .for_each(|(byte1, byte2)| *byte1 ^= byte2);
 
     let flavor2: Vec<u8> = (0..(random.next_int() & 0xF) + 0x11)
         .map(|_| random.next_int() as u8)
         .collect();
-    let mut i = random.next_int() as usize % data.len();
-    let offset = (random.next_int() & 0x1FFF) as usize + 0x2000;
-
-    while i < data.len() {
+    for i in (random.next_int() as usize % data.len()..data.len())
+        .step_by((random.next_int() as usize & 0x1FFF) + 0x2000)
+    {
         data[i] ^= flavor2[(key[i % key.len()] as usize ^ i) % flavor2.len()];
-        i += offset as usize;
     }
 }
 
 fn make_key(filepath: &Path, game: Game) -> [u8; 16] {
-    let mut key = match game {
+    let key = match game {
         Game::ADK => 0xbd8cc2bd30674bf8b49b1bf9f6822ef4u128.to_be_bytes(),
         Game::DNG => 0xc95946cad9f04f0aa100aab8cbe8db6bu128.to_be_bytes(),
     };
-    let filename = filepath
-        .file_name()
-        .unwrap()
-        .to_str()
-        .unwrap()
-        .to_ascii_lowercase();
-    let (encoded, _, _) = encoding_rs::WINDOWS_1252.encode(&filename);
-
     if filepath.extension().unwrap() == "s2m" || filepath.extension().unwrap() == "sav" {
         return key;
     }
+    let filename = filepath
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap()
+        .to_ascii_lowercase();
+    let (encoded, _, _) = encoding_rs::WINDOWS_1252.encode(&filename);
     let mut rng = Random::new(gen_crc(&encoded));
-    for byte in key.iter_mut() {
-        *byte ^= rng.next_int() as u8;
-    }
-    key
+    key.map(|byte| byte ^ rng.next_int() as u8)
 }
 
-fn decrypt(key: &[u8; 16], header: Header, contents: &mut [u8]) -> Result<Vec<u8>, DecryptError> {
-    let crc = gen_crc(key);
+fn decrypt(key: [u8; 16], header: Header, contents: &mut [u8]) -> Result<Vec<u8>, DecryptError> {
+    let crc = gen_crc(&key);
     if crc != header.name_crc {
         return Err(DecryptError::NameCrcMismatch(crc, header.name_crc));
     }
     encrypt_decrypt(key, contents);
     let res = decompress(contents);
-    let file_crc = gen_crc(&res);
     if res.len() != header.size.try_into().unwrap() {
         return Err(DecryptError::SizeMismatch(res.len() as u32, header.size));
     }
+    let file_crc = gen_crc(&res);
     if file_crc != header.file_crc {
         return Err(DecryptError::FileCrcMismatch(file_crc, header.file_crc));
     }
@@ -374,10 +347,21 @@ fn compress_lzss(uncomp: &[u8]) -> Vec<u8> {
     comp
 }
 
-fn encrypt(key: &[u8; 16], contents: &[u8], game: Game) -> Vec<u8> {
+fn encrypt(key: [u8; 16], contents: &[u8], game: Game) -> Vec<u8> {
     let mut comp = compress_lzss(contents);
     encrypt_decrypt(key, &mut comp);
-    Header::new(game, gen_crc(contents), gen_crc(key), contents.len() as u32).add_to(&mut comp);
+    comp.splice(
+        0..0,
+        [
+            0x06091812,
+            game as u32,
+            gen_crc(contents),
+            gen_crc(&key),
+            contents.len() as u32,
+        ]
+        .iter()
+        .flat_map(|num| num.to_le_bytes()),
+    );
     comp
 }
 
@@ -393,13 +377,13 @@ fn main() {
         .map(|entry| entry.path().to_path_buf())
         .map(|file| (file.clone(), std::fs::read(file).unwrap()))
         .map(|mut file| -> Result<(), CryptError> {
-            if let Ok(header) = Header::from(&file.1) {
+            if let Ok(header) = Header::try_from(file.1.as_slice()) {
                 let ext = match header.game {
                     Game::ADK => "adk.",
                     Game::DNG => "dng.",
                 };
                 let key = make_key(&file.0, header.game);
-                let res = decrypt(&key, header, &mut file.1[20..])?;
+                let res = decrypt(key, header, &mut file.1[20..])?;
                 file.0
                     .set_extension(ext.to_owned() + file.0.extension().unwrap().to_str().unwrap());
                 std::fs::write(&file.0, &res)?;
@@ -412,12 +396,12 @@ fn main() {
                 } else {
                     return Ok(());
                 };
-                let content = encrypt(&make_key(&file.0, game), &file.1, game);
                 file.0.set_file_name(
                     file_stem[..file_stem.len() - 4].to_owned()
                         + "."
                         + file.0.extension().unwrap().to_str().unwrap(),
                 );
+                let content = encrypt(make_key(&file.0, game), &file.1, game);
                 std::fs::write(&file.0, content)?;
             }
             Ok(())
@@ -442,12 +426,12 @@ mod tests {
             .map(|entry| entry.path().to_path_buf())
             .map(|file| (file.clone(), std::fs::read(file).unwrap()))
             .map(|mut file| -> Result<isize, CryptError> {
-                if let Ok(header) = Header::from(&file.1) {
+                if let Ok(header) = Header::try_from(file.1.as_slice()) {
                     let key = make_key(&file.0, header.game);
-                    let res = decrypt(&key, header, &mut file.1[20..])?;
-                    let mut contents = encrypt(&key, &res, header.game);
-                    assert_eq!(header, Header::from(&contents)?);
-                    decrypt(&key, header, &mut contents[20..])?;
+                    let res = decrypt(key, header, &mut file.1[20..])?;
+                    let mut contents = encrypt(key, &res, header.game);
+                    assert_eq!(header, Header::try_from(contents.as_slice())?);
+                    decrypt(key, header, &mut contents[20..])?;
                     return Ok(file.1.len() as isize - contents.len() as isize);
                 }
                 Ok(0)
