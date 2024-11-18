@@ -23,15 +23,6 @@ enum DecryptError {
     #[error("file size mismatch: {0} != {1}")]
     SizeMismatch(u32, u32),
 }
-#[derive(Error, Debug)]
-enum CryptError {
-    #[error("Error occurred while decryping:\n{0}")]
-    DecryptError(#[from] DecryptError),
-    #[error("Error occurred while parsing header:\n{0}")]
-    FormatError(#[from] FormatError),
-    #[error("Error occurred while writing:\n{0}")]
-    IOError(#[from] std::io::Error),
-}
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum Game {
@@ -375,17 +366,23 @@ fn main() {
         .filter(|entry| entry.file_type().is_file())
         .map(|entry| entry.path().to_path_buf())
         .map(|file| (file.clone(), std::fs::read(file).unwrap()))
-        .map(|mut file| -> Result<(), CryptError> {
+        .for_each(|mut file| {
             if let Ok(header) = Header::try_from(file.1.as_slice()) {
+                let path = file.0.display();
                 let ext = match header.game {
                     Game::ADK => "adk.",
                     Game::DNG => "dng.",
                 };
                 let key = make_key(&file.0, header.game);
-                let res = decrypt(key, header, &mut file.1[20..])?;
+                let res = decrypt(key, header, &mut file.1[20..])
+                    .map_err(|e| format!("Error occurred while decrypting {path}:\n{e}"))
+                    .unwrap();
+
                 file.0
                     .set_extension(ext.to_owned() + file.0.extension().unwrap().to_str().unwrap());
-                std::fs::write(&file.0, &res)?;
+                let new_path = file.0.display();
+                std::fs::write(&file.0, &res)
+                    .unwrap_or_else(|_| panic!("could not write to {new_path}"));
             } else {
                 let file_stem = file.0.file_stem().unwrap().to_str().unwrap();
                 let game = if file_stem.ends_with(".adk") {
@@ -393,7 +390,7 @@ fn main() {
                 } else if file_stem.ends_with(".dng") {
                     Game::DNG
                 } else {
-                    return Ok(());
+                    return;
                 };
                 file.0.set_file_name(
                     file_stem[..file_stem.len() - 4].to_owned()
@@ -401,16 +398,16 @@ fn main() {
                         + file.0.extension().unwrap().to_str().unwrap(),
                 );
                 let content = encrypt(make_key(&file.0, game), &file.1, game);
-                std::fs::write(&file.0, content)?;
+                let new_path = file.0.display();
+                std::fs::write(&file.0, &content)
+                    .unwrap_or_else(|_| panic!("could not write to {new_path}"));
             }
-            Ok(())
         })
-        .filter_map(Result::err)
-        .for_each(|e| panic!("{e}"));
 }
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
     #[test]
     fn is_valid() {
@@ -424,22 +421,26 @@ mod tests {
             .filter(|entry| entry.file_type().is_file())
             .map(|entry| entry.path().to_path_buf())
             .map(|file| (file.clone(), std::fs::read(file).unwrap()))
-            .map(|mut file| -> Result<isize, CryptError> {
+            .map(|mut file| -> isize {
                 if let Ok(header) = Header::try_from(file.1.as_slice()) {
+                    let path = file.0.display();
                     let key = make_key(&file.0, header.game);
-                    let res = decrypt(key, header, &mut file.1[20..])?;
+                    let res = decrypt(key, header, &mut file.1[20..])
+                        .map_err(|e| format!("Error occurred in 1. decryption {path}:\n{e}"))
+                        .unwrap();
                     let mut contents = encrypt(key, &res, header.game);
-                    assert_eq!(header, Header::try_from(contents.as_slice())?);
-                    decrypt(key, header, &mut contents[20..])?;
-                    return Ok(file.1.len() as isize - contents.len() as isize);
+                    assert_eq!(
+                        header,
+                        Header::try_from(contents.as_slice())
+                            .map_err(|e| format!("Error occurred while in 2. header {path}:\n{e}"))
+                            .unwrap()
+                    );
+                    decrypt(key, header, &mut contents[20..])
+                        .map_err(|e| format!("Error occurred in 2. decryption {path}:\n{e}"))
+                        .unwrap();
+                    return file.1.len() as isize - contents.len() as isize;
                 }
-                Ok(0)
-            })
-            .map(|res| {
-                return match res {
-                    Ok(val) => val,
-                    Err(e) => panic!("{e}"),
-                };
+                0
             })
             .sum::<isize>();
         println!("saved {saved} bytes!");
