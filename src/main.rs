@@ -243,7 +243,6 @@ fn search(tree: &mut [TreeNode], idx: usize, uncomp: &[u8]) -> (u8, u16) {
         return (0, 0);
     }
     delete_node(tree, idx & 0x3ff);
-    let mut diff = 1;
     tree[idx & 0x3ff] = TreeNode::new();
     let mut curr = uncomp[idx] as usize + 0x400 + 1;
     let mut copy_len = 0;
@@ -255,28 +254,27 @@ fn search(tree: &mut [TreeNode], idx: usize, uncomp: &[u8]) -> (u8, u16) {
         return (copy_len, copy_offset);
     }
     curr = tree[curr].larger as usize;
+    let currcomp = u128::from_be_bytes(uncomp[idx + 2..idx + 18].try_into().unwrap());
 
     loop {
-        let mut curr_copy_len = 18;
-        let idx_curr = (curr as isize - idx as isize & 0x3ff) as usize + idx - 1024;
-        for i in 1..18 {
-            diff = uncomp[idx + i] as i32 - uncomp[idx_curr + i] as i32;
-            if diff != 0 {
-                curr_copy_len = i as u8;
-                break;
+        let c_idx = (curr.wrapping_sub(idx) & 0x3ff) + idx - 1024;
+        let is_smaller = if uncomp[idx + 1] == uncomp[c_idx + 1] {
+            let currcomp2 = u128::from_be_bytes(uncomp[c_idx + 2..c_idx + 18].try_into().unwrap());
+            let curr_copy_len = (currcomp2 ^ currcomp).leading_zeros() as u8 / 8 + 2;
+            if copy_len < curr_copy_len {
+                copy_len = curr_copy_len;
+                copy_offset = curr as u16;
+                if curr_copy_len == 18 {
+                    replace_node(tree, idx & 0x3ff, curr);
+                    return (copy_len, copy_offset);
+                }
             }
-        }
+            currcomp < currcomp2
+        } else {
+            uncomp[idx + 1] < uncomp[c_idx + 1]
+        };
 
-        if copy_len < curr_copy_len {
-            copy_len = curr_copy_len;
-            copy_offset = curr as u16;
-            if curr_copy_len == 18 {
-                insert_node(tree, idx & 0x3ff, curr);
-                return (copy_len, copy_offset);
-            }
-        }
-
-        if diff > 0 {
+        if is_smaller {
             if tree[curr].larger == 0x400 {
                 tree[curr].larger = (idx & 0x3ff) as u16;
                 tree[idx & 0x3ff].parent = curr as u16;
@@ -294,11 +292,8 @@ fn search(tree: &mut [TreeNode], idx: usize, uncomp: &[u8]) -> (u8, u16) {
     }
 }
 
-fn insert_node(tree: &mut [TreeNode], new_idx: usize, curr_idx: usize) {
-    tree[new_idx].parent = tree[curr_idx].parent;
-    tree[new_idx].smaller = tree[curr_idx].smaller;
-    tree[new_idx].larger = tree[curr_idx].larger;
-
+fn replace_node(tree: &mut [TreeNode], new_idx: usize, curr_idx: usize) {
+    tree[new_idx] = tree[curr_idx].clone();
     tree[tree[curr_idx].smaller as usize].parent = new_idx as u16;
     tree[tree[curr_idx].larger as usize].parent = new_idx as u16;
     change_parent(tree, curr_idx, new_idx);
