@@ -239,10 +239,10 @@ fn change_parent(tree: &mut [TreeNode], old_idx: usize, new_idx: usize) {
 }
 
 fn search(tree: &mut [TreeNode], idx: usize, uncomp: &[u8]) -> (u8, u16) {
-    if idx + 18 > uncomp.len() {
+    if idx + 17 >= uncomp.len() {
         return (0, 0);
     }
-    delete_node(tree, (idx + 17) & 0x3ff);
+    delete_node(tree, idx & 0x3ff);
     let mut diff = 1;
     tree[idx & 0x3ff] = TreeNode::new();
     let mut curr = uncomp[idx] as usize + 0x400 + 1;
