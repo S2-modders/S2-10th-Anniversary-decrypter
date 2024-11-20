@@ -26,8 +26,8 @@ enum DecryptError {
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum Game {
-    DNG = 0x30306372,
-    ADK = 0x6b646173,
+    DNG = u32::from_le_bytes(*b"rc00") as isize,
+    ADK = u32::from_le_bytes(*b"sadk") as isize,
 }
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 struct Header {
