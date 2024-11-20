@@ -116,8 +116,8 @@ fn decompress(cmp: &[u8]) -> Vec<u8> {
             dc.push(curr);
             mode >>= 1;
         } else if let Some(&next) = iter.next() {
-            let num = curr as isize + ((next as isize & 0x30) << 4);
-            let c = (num - dc.len() as isize - 0x3f0 & 0x3ff) as usize + dc.len();
+            let num = curr as usize + ((next as usize & 0x30) << 4);
+            let c = (num.wrapping_sub(dc.len()) + 0x400 - 0x3f0 & 0x3ff) + dc.len();
             for i in 0..3 + (next as usize & 0xf) {
                 dc.push(if c + i < 1024 { b' ' } else { dc[c + i - 1024] });
             }
@@ -210,7 +210,7 @@ fn delete_node(tree: &mut [TreeNode], old_idx: usize) {
     } as usize;
 
     if tree[old_idx].larger != 0x400 && tree[old_idx].smaller != 0x400 {
-        if tree[new_idx].larger != 0x400 {
+        if tree[tree[old_idx].smaller as usize].larger != 0x400 {
             while tree[new_idx].larger != 0x400 {
                 new_idx = tree[new_idx].larger as usize;
             }
@@ -362,10 +362,6 @@ fn main() {
         .map(|file| (file.clone(), std::fs::read(file).unwrap()))
         .for_each(|mut file| {
             if let Ok(header) = Header::try_from(file.1.as_slice()) {
-                let ext = match header.game {
-                    Game::ADK => "adk.",
-                    Game::DNG => "dng.",
-                };
                 let key = make_key(&file.0, header.game);
                 let res = decrypt(key, header, &mut file.1[20..])
                     .map_err(|e| {
@@ -373,6 +369,10 @@ fn main() {
                     })
                     .unwrap();
 
+                let ext = match header.game {
+                    Game::ADK => "adk.",
+                    Game::DNG => "dng.",
+                };
                 file.0
                     .set_extension(ext.to_owned() + file.0.extension().unwrap().to_str().unwrap());
                 std::fs::write(&file.0, &res)
