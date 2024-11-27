@@ -1,7 +1,6 @@
 use rayon::prelude::*;
 use simple_eyre::eyre::{eyre, Context, Result};
 use std::env;
-use std::slice::from_raw_parts;
 use walkdir::WalkDir;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -23,20 +22,19 @@ impl TryFrom<&[u8]> for Header {
         if len < 20 {
             return Err(eyre!("File too short to have a proper header: {len} < 20"));
         }
-        let header = unsafe { from_raw_parts(vec.as_ptr() as *const u32, 5) };
-        let magic = header[0];
+        let magic = u32::from_le_bytes(vec[0..4].try_into().unwrap());
         if magic != 0x06091812 {
             return Err(eyre!("Not an encrypted file ({magic:#x} != 0x6091812)"));
         }
         Ok(Header {
-            game: match header[1] {
+            game: match u32::from_le_bytes(vec[4..8].try_into().unwrap()) {
                 0x6b646173 => Game::ADK,
                 0x30306372 => Game::DNG,
                 fcc => return Err(eyre!("No matching game header found for fcc {fcc:#x}")),
             },
-            file_crc: header[2],
-            name_crc: header[3],
-            size: header[4],
+            file_crc: u32::from_le_bytes(vec[8..12].try_into().unwrap()),
+            name_crc: u32::from_le_bytes(vec[12..16].try_into().unwrap()),
+            size: u32::from_le_bytes(vec[16..20].try_into().unwrap()),
         })
     }
 }
