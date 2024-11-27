@@ -383,7 +383,6 @@ mod tests {
     use super::*;
     #[test]
     fn is_valid() {
-        simple_eyre::install().unwrap();
         let saved = std::env::args()
             .collect::<Vec<String>>()
             .into_iter()
