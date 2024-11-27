@@ -1,7 +1,5 @@
 use rayon::prelude::*;
-use simple_eyre::eyre::{eyre, Context, Result};
-use std::env;
-use walkdir::WalkDir;
+use simple_eyre::eyre::{eyre, Context, Report, Result};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum Game {
@@ -16,7 +14,7 @@ struct Header {
     size: u32,
 }
 impl TryFrom<&[u8]> for Header {
-    type Error = simple_eyre::Report;
+    type Error = Report;
     fn try_from(vec: &[u8]) -> Result<Self> {
         let len = vec.len();
         if len < 20 {
@@ -331,11 +329,11 @@ fn encrypt(key: [u8; 16], contents: &[u8], game: Game) -> Vec<u8> {
 
 fn main() -> Result<()> {
     simple_eyre::install()?;
-    let e = env::args()
+    let e = std::env::args()
         .collect::<Vec<String>>()
         .into_iter()
         .skip(1)
-        .flat_map(WalkDir::new)
+        .flat_map(walkdir::WalkDir::new)
         .par_bridge()
         .filter_map(Result::ok)
         .filter(|entry| entry.file_type().is_file())
@@ -386,11 +384,11 @@ mod tests {
     #[test]
     fn is_valid() {
         simple_eyre::install().unwrap();
-        let saved = env::args()
+        let saved = std::env::args()
             .collect::<Vec<String>>()
             .into_iter()
             .skip(1)
-            .flat_map(WalkDir::new)
+            .flat_map(walkdir::WalkDir::new)
             .par_bridge()
             .filter_map(Result::ok)
             .filter(|entry| entry.file_type().is_file())
