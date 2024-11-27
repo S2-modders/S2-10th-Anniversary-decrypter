@@ -1,28 +1,9 @@
 use rayon::prelude::*;
+use simple_eyre::eyre::{eyre, Context, Result};
 use std::env;
 use std::path::Path;
 use std::slice::from_raw_parts;
-use thiserror::Error;
 use walkdir::WalkDir;
-
-#[derive(Error, Debug)]
-enum FormatError {
-    #[error("File too short to have a proper header: {0} < 20")]
-    FileTooShort(usize),
-    #[error("Not an encrypted file: magic does not match: {0:#x} != 0x6091812")]
-    NotEncryptedFile(u32),
-    #[error("No matching game header found for fcc {0:#x}")]
-    NoGameFccFound(u32),
-}
-#[derive(Error, Debug)]
-enum DecryptError {
-    #[error("file name crc mismatch: {0:#x} != {1:#x}")]
-    NameCrcMismatch(u32, u32),
-    #[error("file crc mismatch: {0:#x} != {1:#x}")]
-    FileCrcMismatch(u32, u32),
-    #[error("file size mismatch: {0} != {1}")]
-    SizeMismatch(u32, u32),
-}
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum Game {
@@ -37,20 +18,22 @@ struct Header {
     size: u32,
 }
 impl TryFrom<&[u8]> for Header {
-    type Error = FormatError;
-    fn try_from(vec: &[u8]) -> Result<Self, Self::Error> {
-        if vec.len() < 20 {
-            return Err(FormatError::FileTooShort(vec.len()));
+    type Error = simple_eyre::Report;
+    fn try_from(vec: &[u8]) -> Result<Self> {
+        let len = vec.len();
+        if len < 20 {
+            return Err(eyre!("File too short to have a proper header: {len} < 20"));
         }
         let header = unsafe { from_raw_parts(vec.as_ptr() as *const u32, 5) };
-        if header[0] != 0x06091812 {
-            return Err(FormatError::NotEncryptedFile(header[0]));
+        let magic = header[0];
+        if magic != 0x06091812 {
+            return Err(eyre!("Not an encrypted file ({magic:#x} != 0x6091812)"));
         }
         Ok(Header {
             game: match header[1] {
                 0x6b646173 => Game::ADK,
                 0x30306372 => Game::DNG,
-                fcc => return Err(FormatError::NoGameFccFound(fcc)),
+                fcc => return Err(eyre!("No matching game header found for fcc {fcc:#x}")),
             },
             file_crc: header[2],
             name_crc: header[3],
@@ -80,7 +63,7 @@ impl Random {
     }
 
     fn next_int(&mut self) -> u32 {
-        let mul = (self.seed as u64) * 0x41a7;
+        let mul = (self.seed as u64) * 7u64.pow(5);
         self.seed = (mul as u32 & 0x7fffffff) + (mul >> 31) as u32;
         self.seed
     }
@@ -164,19 +147,23 @@ fn make_key(file_path: &Path, game: Game) -> [u8; 16] {
     }
 }
 
-fn decrypt(key: [u8; 16], header: Header, contents: &mut [u8]) -> Result<Vec<u8>, DecryptError> {
+fn decrypt(key: [u8; 16], header: Header, contents: &mut [u8]) -> simple_eyre::Result<Vec<u8>> {
     let crc = gen_crc(&key);
-    if crc != header.name_crc {
-        return Err(DecryptError::NameCrcMismatch(crc, header.name_crc));
+    let expected = header.name_crc;
+    if crc != expected {
+        return Err(eyre!("file name crc mismatch: {crc:#x} != {expected:#x}"));
     }
     encrypt_decrypt(key, contents);
     let res = decompress(contents);
-    if res.len() != header.size.try_into().unwrap() {
-        return Err(DecryptError::SizeMismatch(res.len() as u32, header.size));
+    let expected_len = header.size.try_into().unwrap();
+    let len = res.len();
+    if len != expected_len {
+        return Err(eyre!("file size mismatch: {len} != {expected_len}"));
     }
     let file_crc = gen_crc(&res);
-    if file_crc != header.file_crc {
-        return Err(DecryptError::FileCrcMismatch(file_crc, header.file_crc));
+    let expected = header.file_crc;
+    if file_crc != expected {
+        return Err(eyre!("file crc mismatch: {file_crc:#x} != {expected:#x}"));
     }
     Ok(res)
 }
@@ -349,8 +336,9 @@ fn encrypt(key: [u8; 16], contents: &[u8], game: Game) -> Vec<u8> {
     comp
 }
 
-fn main() {
-    env::args()
+fn main() -> Result<()> {
+    simple_eyre::install()?;
+    let e = env::args()
         .collect::<Vec<String>>()
         .into_iter()
         .skip(1)
@@ -360,39 +348,41 @@ fn main() {
         .filter(|entry| entry.file_type().is_file())
         .map(|entry| entry.path().to_path_buf())
         .map(|file| (file.clone(), std::fs::read(file).unwrap()))
-        .for_each(|mut file| {
-            if let Ok(header) = Header::try_from(file.1.as_slice()) {
-                let key = make_key(&file.0, header.game);
-                let res = decrypt(key, header, &mut file.1[20..])
-                    .map_err(|e| {
-                        format!("Error occurred while decrypting {}:\n{e}", file.0.display())
-                    })
-                    .unwrap();
-
+        .map(|mut file| -> Result<()> {
+            let res = if let Ok(header) = Header::try_from(file.1.as_slice()) {
                 let ext = match header.game {
                     Game::ADK => "adk.",
                     Game::DNG => "dng.",
                 };
                 file.0
                     .set_extension(ext.to_owned() + file.0.extension().unwrap().to_str().unwrap());
-                std::fs::write(&file.0, &res)
-                    .unwrap_or_else(|_| panic!("could not write to {}", file.0.display()));
+                let key = make_key(&file.0, header.game);
+                decrypt(key, header, &mut file.1[20..]).context(format!(
+                    "Error occurred while decrypting {}",
+                    file.0.display()
+                ))?
             } else {
                 let file_stem = file.0.file_stem().unwrap().to_str().unwrap();
                 let game = match &file_stem[file_stem.len() - 4..] {
                     ".adk" => Game::ADK,
                     ".dng" => Game::DNG,
-                    _ => return,
+                    _ => return Ok(()),
                 };
                 file.0.set_file_name(
                     file_stem[..file_stem.len() - 3].to_owned()
                         + file.0.extension().unwrap().to_str().unwrap(),
                 );
-                let content = encrypt(make_key(&file.0, game), &file.1, game);
-                std::fs::write(&file.0, &content)
-                    .unwrap_or_else(|_| panic!("could not write to {}", file.0.display()));
-            }
+                encrypt(make_key(&file.0, game), &file.1, game)
+            };
+            std::fs::write(&file.0, &res)
+                .wrap_err(format!("could not write to {}", file.0.display()))?;
+            Ok(())
         })
+        .find_any(Result::is_err);
+    match e {
+        Some(report) => report,
+        None => Ok(()),
+    }
 }
 
 #[cfg(test)]
@@ -400,6 +390,7 @@ mod tests {
     use super::*;
     #[test]
     fn is_valid() {
+        simple_eyre::install().unwrap();
         let saved = env::args()
             .collect::<Vec<String>>()
             .into_iter()
@@ -410,27 +401,26 @@ mod tests {
             .filter(|entry| entry.file_type().is_file())
             .map(|entry| entry.path().to_path_buf())
             .map(|file| (file.clone(), std::fs::read(file).unwrap()))
-            .map(|mut file| -> isize {
+            .map(|mut file| -> Result<isize> {
                 if let Ok(header) = Header::try_from(file.1.as_slice()) {
                     let path = file.0.display();
                     let key = make_key(&file.0, header.game);
                     let res = decrypt(key, header, &mut file.1[20..])
-                        .map_err(|e| format!("Error occurred in 1. decryption {path}:\n{e}"))
-                        .unwrap();
+                        .wrap_err(format!("Error occurred in 1. decryption of {path}"))?;
                     let mut contents = encrypt(key, &res, header.game);
                     assert_eq!(
                         header,
-                        Header::try_from(contents.as_slice())
-                            .map_err(|e| format!("Error occurred while in 2. header {path}:\n{e}"))
-                            .unwrap()
+                        Header::try_from(contents.as_slice()).wrap_err(format!(
+                            "Error occurred while constructing 2. header of {path}"
+                        ))?
                     );
                     decrypt(key, header, &mut contents[20..])
-                        .map_err(|e| format!("Error occurred in 2. decryption {path}:\n{e}"))
-                        .unwrap();
-                    return file.1.len() as isize - contents.len() as isize;
+                        .wrap_err(format!("Error occurred in 2. decryption of {path}"))?;
+                    return Ok(file.1.len() as isize - contents.len() as isize);
                 }
-                0
+                Ok(0)
             })
+            .map(Result::unwrap)
             .sum::<isize>();
         println!("saved {saved} bytes!");
     }
