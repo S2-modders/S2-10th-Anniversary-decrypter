@@ -1,7 +1,6 @@
 use rayon::prelude::*;
 use simple_eyre::eyre::{eyre, Context, Result};
 use std::env;
-use std::path::Path;
 use std::slice::from_raw_parts;
 use walkdir::WalkDir;
 
@@ -130,16 +129,12 @@ fn encrypt_decrypt(key: [u8; 16], data: &mut [u8]) {
     }
 }
 
-fn make_key(file_path: &Path, game: Game) -> [u8; 16] {
+fn make_key(file_name: &str, game: Game) -> [u8; 16] {
     let key = match game {
         Game::ADK => 0xbd8cc2bd30674bf8b49b1bf9f6822ef4u128.to_be_bytes(),
         Game::DNG => 0xc95946cad9f04f0aa100aab8cbe8db6bu128.to_be_bytes(),
     };
-    let file_name = file_path
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap()
-        .to_ascii_lowercase();
+    let file_name = file_name.to_ascii_lowercase();
     let mut rng = Random::new(gen_crc(&encoding_rs::WINDOWS_1252.encode(&file_name).0));
     match &file_name[file_name.len() - 4..] {
         ".s2m" | ".sav" => return key,
@@ -354,9 +349,10 @@ fn main() -> Result<()> {
                     Game::ADK => "adk.",
                     Game::DNG => "dng.",
                 };
+                let file_name = file.0.file_name().unwrap().to_str().unwrap();
+                let key = make_key(file_name, header.game);
                 file.0
                     .set_extension(ext.to_owned() + file.0.extension().unwrap().to_str().unwrap());
-                let key = make_key(&file.0, header.game);
                 decrypt(key, header, &mut file.1[20..]).context(format!(
                     "Error occurred while decrypting {}",
                     file.0.display()
@@ -372,7 +368,8 @@ fn main() -> Result<()> {
                     file_stem[..file_stem.len() - 3].to_owned()
                         + file.0.extension().unwrap().to_str().unwrap(),
                 );
-                encrypt(make_key(&file.0, game), &file.1, game)
+                let file_name = file.0.file_name().unwrap().to_str().unwrap();
+                encrypt(make_key(file_name, game), &file.1, game)
             };
             std::fs::write(&file.0, &res)
                 .wrap_err(format!("could not write to {}", file.0.display()))?;
@@ -404,7 +401,8 @@ mod tests {
             .map(|mut file| -> Result<isize> {
                 if let Ok(header) = Header::try_from(file.1.as_slice()) {
                     let path = file.0.display();
-                    let key = make_key(&file.0, header.game);
+                    let file_name = file.0.file_name().unwrap().to_str().unwrap();
+                    let key = make_key(file_name, header.game);
                     let res = decrypt(key, header, &mut file.1[20..])
                         .wrap_err(format!("Error occurred in 1. decryption of {path}"))?;
                     let mut contents = encrypt(key, &res, header.game);
