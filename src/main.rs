@@ -132,7 +132,7 @@ fn make_key(file_name: &str, game: Game) -> [u8; 16] {
     }
 }
 
-fn decrypt(key: [u8; 16], header: Header, contents: &mut [u8]) -> simple_eyre::Result<Vec<u8>> {
+fn decrypt(key: [u8; 16], header: Header, contents: &mut [u8]) -> Result<Vec<u8>> {
     let crc = gen_crc(&key);
     let expected = header.name_crc;
     if crc != expected {
@@ -323,7 +323,7 @@ fn encrypt(key: [u8; 16], contents: &[u8], game: Game) -> Vec<u8> {
 
 fn main() -> Result<()> {
     simple_eyre::install()?;
-    let e = std::env::args()
+    std::env::args()
         .collect::<Vec<String>>()
         .into_iter()
         .skip(1)
@@ -365,11 +365,8 @@ fn main() -> Result<()> {
                 .wrap_err(format!("could not write to {}", file.0.display()))?;
             Ok(())
         })
-        .find_any(Result::is_err);
-    match e {
-        Some(report) => report,
-        None => Ok(()),
-    }
+        .find_any(Result::is_err)
+        .map_or(Ok(()), |report| report)
 }
 
 #[cfg(test)]
