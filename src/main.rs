@@ -85,6 +85,7 @@ fn gen_crc(data: &[u8]) -> u32 {
 
 fn decompress(cmp: &[u8]) -> Vec<u8> {
     let mut dc = Vec::with_capacity(cmp.len() * 9 / 8);
+    dc.extend_from_slice(&[0x20; 16]);
     let mut mode = 0;
     let mut iter = cmp.iter();
     while let Some(&curr) = iter.next() {
@@ -95,14 +96,12 @@ fn decompress(cmp: &[u8]) -> Vec<u8> {
             mode >>= 1;
         } else if let Some(&next) = iter.next() {
             let num = curr as usize + ((next as usize & 0x30) << 4);
-            let c = (num.wrapping_sub(dc.len()) + 0x400 - 0x3f0 & 0x3ff) + dc.len();
-            for i in 0..3 + (next as usize & 0xf) {
-                dc.push(if c + i < 1024 { b' ' } else { dc[c + i - 1024] });
-            }
+            let c = dc.len() - (dc.len() - num - 32 & 0x3ff);
+            (c..c + 3 + (next as usize & 0xf)).for_each(|i| dc.push(dc[i]));
             mode >>= 1;
         }
     }
-    dc
+    dc[16..].to_vec()
 }
 
 fn encrypt_decrypt(key: [u8; 16], data: &mut [u8]) {
@@ -349,7 +348,7 @@ fn main() -> Result<()> {
                 let key = make_key(file_name, header.game);
                 file.0
                     .set_extension(ext.to_owned() + file.0.extension().unwrap().to_str().unwrap());
-                decrypt(key, header, &mut file.1[20..]).context(format!(
+                decrypt(key, header, &mut file.1).context(format!(
                     "Error occurred while decrypting {}",
                     file.0.display()
                 ))?
