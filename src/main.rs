@@ -42,17 +42,12 @@ struct Random {
 }
 impl Random {
     fn new(crc: u32) -> Self {
-        const RANDOM_INT_POS: [u32; 8] = [0xC, 0x17, 0xA, 0x19, 0x8, 0x1B, 0x6, 0x1D];
         let mut seed = crc & 0x7fffffff;
-
-        let population = seed.count_ones() as usize;
-        // Set bits
-        for i in population..8 {
-            seed |= 1 << RANDOM_INT_POS[i - population];
+        for i in 5..13 - seed.count_ones() as i32 {
+            seed |= 1 << (17 + i - 2 * i * (i & 1));
         }
-        // Remove bits
-        for i in 24..population {
-            seed &= !(1 << RANDOM_INT_POS[i - 24]);
+        for i in 5..seed.count_ones() as i32 - 19 {
+            seed &= !(1 << (17 + i - 2 * i * (i & 1)));
         }
         Random { seed }
     }
