@@ -343,7 +343,7 @@ fn main() -> Result<()> {
                 let key = make_key(file_name, header.game);
                 file.0
                     .set_extension(ext.to_owned() + file.0.extension().unwrap().to_str().unwrap());
-                decrypt(key, header, &mut file.1).context(format!(
+                decrypt(key, header, &mut file.1[20..]).context(format!(
                     "Error occurred while decrypting {}",
                     file.0.display()
                 ))?
