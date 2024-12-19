@@ -1,3 +1,5 @@
+use std::cmp::max;
+
 use rayon::prelude::*;
 use simple_eyre::eyre::{eyre, Context, Report, Result};
 
@@ -153,133 +155,37 @@ fn decrypt(key: [u8; 16], header: Header, contents: &mut [u8]) -> Result<Vec<u8>
     Ok(res)
 }
 
-#[derive(Copy, Clone)]
-struct TreeNode {
-    parent: u16,
-    larger: u16,
-    smaller: u16,
-}
-
-impl TreeNode {
-    fn new() -> Self {
-        TreeNode {
-            parent: 0x400,
-            larger: 0x400,
-            smaller: 0x400,
-        }
-    }
-}
-
-fn delete_node(tree: &mut [TreeNode], old_idx: usize) {
-    if tree[old_idx].parent == 0x400 {
-        return;
-    }
-
-    let mut new_idx = if tree[old_idx].smaller != 0x400 {
-        tree[old_idx].smaller
-    } else {
-        tree[old_idx].larger
-    } as usize;
-
-    if tree[old_idx].larger != 0x400 && tree[old_idx].smaller != 0x400 {
-        if tree[tree[old_idx].smaller as usize].larger != 0x400 {
-            while tree[new_idx].larger != 0x400 {
-                new_idx = tree[new_idx].larger as usize;
-            }
-            tree[tree[new_idx].smaller as usize].parent = tree[new_idx].parent;
-
-            tree[tree[new_idx].parent as usize].larger = tree[new_idx].smaller;
-            tree[new_idx].smaller = tree[old_idx].smaller;
-            tree[tree[old_idx].smaller as usize].parent = new_idx as u16;
-        }
-        tree[new_idx].larger = tree[old_idx].larger;
-        tree[tree[old_idx].larger as usize].parent = new_idx as u16;
-    }
-
-    tree[new_idx].parent = tree[old_idx].parent;
-    change_parent(tree, old_idx, new_idx);
-}
-
-fn change_parent(tree: &mut [TreeNode], old_idx: usize, new_idx: usize) {
-    if tree[tree[old_idx].parent as usize].larger == old_idx as u16 {
-        tree[tree[old_idx].parent as usize].larger = new_idx as u16;
-    } else {
-        tree[tree[old_idx].parent as usize].smaller = new_idx as u16;
-    }
-
-    tree[old_idx].parent = 0x400;
-}
-
-fn search(tree: &mut [TreeNode], idx: usize, uncomp: &[u8]) -> (u8, u16) {
+fn search(idx: usize, uncomp: &[u8]) -> (u8, u16) {
     if idx + 17 >= uncomp.len() {
         return (0, 0);
     }
-    delete_node(tree, idx & 0x3ff);
-    tree[idx & 0x3ff] = TreeNode::new();
-    let mut curr = uncomp[idx] as usize + 0x400 + 1;
+    let currcomp = u128::from_be_bytes(uncomp[idx + 2..idx + 18].try_into().unwrap());
     let mut copy_len = 0;
     let mut copy_offset = 0;
-
-    if tree[curr].larger == 0x400 {
-        tree[curr].larger = (idx & 0x3ff) as u16;
-        tree[idx & 0x3ff].parent = curr as u16;
-        return (copy_len, copy_offset);
-    }
-    curr = tree[curr].larger as usize;
-    let currcomp = u128::from_be_bytes(uncomp[idx + 2..idx + 18].try_into().unwrap());
-
-    loop {
-        let c_idx = (curr.wrapping_sub(idx) & 0x3ff) + idx - 1024;
-        let is_smaller = if uncomp[idx + 1] == uncomp[c_idx + 1] {
+    for c_idx in (idx.saturating_sub(1023)..idx).rev() {
+        if uncomp[idx] == uncomp[c_idx] && uncomp[idx + 1] == uncomp[c_idx + 1] {
             let currcomp2 = u128::from_be_bytes(uncomp[c_idx + 2..c_idx + 18].try_into().unwrap());
             let curr_copy_len = (currcomp2 ^ currcomp).leading_zeros() as u8 / 8 + 2;
             if copy_len < curr_copy_len {
                 copy_len = curr_copy_len;
-                copy_offset = curr as u16;
+                copy_offset = c_idx as u16 & 0x3ff;
                 if curr_copy_len == 18 {
-                    replace_node(tree, idx & 0x3ff, curr);
-                    return (copy_len, copy_offset);
+                    break;
                 }
             }
-            currcomp < currcomp2
-        } else {
-            uncomp[idx + 1] < uncomp[c_idx + 1]
-        };
-
-        if is_smaller {
-            if tree[curr].larger == 0x400 {
-                tree[curr].larger = (idx & 0x3ff) as u16;
-                tree[idx & 0x3ff].parent = curr as u16;
-                return (copy_len, copy_offset);
-            }
-            curr = tree[curr].larger as usize;
-        } else {
-            if tree[curr].smaller == 0x400 {
-                tree[curr].smaller = (idx & 0x3ff) as u16;
-                tree[idx & 0x3ff].parent = curr as u16;
-                return (copy_len, copy_offset);
-            }
-            curr = tree[curr].smaller as usize;
         }
     }
-}
-
-fn replace_node(tree: &mut [TreeNode], new_idx: usize, curr_idx: usize) {
-    tree[new_idx] = tree[curr_idx].clone();
-    tree[tree[curr_idx].smaller as usize].parent = new_idx as u16;
-    tree[tree[curr_idx].larger as usize].parent = new_idx as u16;
-    change_parent(tree, curr_idx, new_idx);
+    (copy_len, copy_offset)
 }
 
 fn compress_lzss(uncomp: &[u8]) -> Vec<u8> {
     let mut comp = Vec::with_capacity(uncomp.len());
-    let mut tree = [TreeNode::new(); 1024 + 1 + 256];
     let mut op_idx = 0;
     let mut op_code = 0;
     let mut consume = 0;
 
     for i in 0..uncomp.len() {
-        let (copy_len, copy_offset) = search(&mut tree, i, uncomp);
+        let (copy_len, copy_offset) = search(i, uncomp);
         if consume == 0 {
             op_code <<= 1;
             if op_code == 0 {
