@@ -157,6 +157,7 @@ fn decrypt(key: [u8; 16], header: Header, contents: &mut [u8]) -> Result<Vec<u8>
 
 fn compress_lzss(uncomp: &[u8]) -> Vec<u8> {
     let mut comp = Vec::with_capacity(uncomp.len());
+    comp.extend_from_slice(&[0; 20]);
     let mut op_idx = 0;
     let mut op_code = 0;
 
@@ -209,9 +210,9 @@ fn compress_lzss(uncomp: &[u8]) -> Vec<u8> {
 
 fn encrypt(key: [u8; 16], contents: &[u8], game: Game) -> Vec<u8> {
     let mut comp = compress_lzss(contents);
-    encrypt_decrypt(key, &mut comp);
+    encrypt_decrypt(key, &mut comp[20..]);
     comp.splice(
-        0..0,
+        0..20,
         [
             0x06091812,
             game as u32,
