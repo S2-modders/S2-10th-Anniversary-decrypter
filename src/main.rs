@@ -8,6 +8,7 @@ enum Game {
     DNG = u32::from_le_bytes(*b"rc00") as isize,
     ADK = u32::from_le_bytes(*b"sadk") as isize,
 }
+const MAGIC: u32 = 0x06091812;
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 struct Header {
     game: Game,
@@ -23,7 +24,7 @@ impl TryFrom<&[u8]> for Header {
             return Err(eyre!("File too short to have a proper header: {len} < 20"));
         }
         let magic = u32::from_le_bytes(vec[0..4].try_into().unwrap());
-        if magic != 0x06091812 {
+        if magic != MAGIC {
             return Err(eyre!("Not an encrypted file ({magic:#x} != 0x6091812)"));
         }
         Ok(Header {
@@ -82,7 +83,7 @@ fn gen_crc(data: &[u8]) -> u32 {
 
 fn decompress(cmp: &[u8], expected_len: usize) -> Vec<u8> {
     let mut dc = Vec::with_capacity(expected_len);
-    dc.extend_from_slice(&[0x20; 16]);
+    dc.extend_from_slice(&[0x20; 18]);
     let mut mode = 0;
     let mut iter = cmp.iter();
     while let Some(&curr) = iter.next() {
@@ -98,7 +99,7 @@ fn decompress(cmp: &[u8], expected_len: usize) -> Vec<u8> {
             mode >>= 1;
         }
     }
-    dc[16..].to_vec()
+    dc[18..].to_vec()
 }
 
 fn encrypt_decrypt(key: [u8; 16], data: &mut [u8]) {
@@ -163,7 +164,7 @@ fn compress_lzss(uncomp: &[u8]) -> Vec<u8> {
 
     let mut i = 18;
     while i < uncomp.len() - 18 {
-        let max_copy_len = min(uncomp.len() - 18 - i, 18);
+        let max_copy_len = min(uncomp.len() - 18 - i, 18) as u8;
         let filter = u16::from_ne_bytes(uncomp[i..i + 2].try_into().unwrap());
         let currcomp = u128::from_be_bytes(uncomp[i + 2..i + 18].try_into().unwrap());
         let mut copy_len = 0;
@@ -182,8 +183,8 @@ fn compress_lzss(uncomp: &[u8]) -> Vec<u8> {
             if copy_len < curr_copy_len {
                 copy_len = curr_copy_len;
                 copy_offset = j;
-                if curr_copy_len as usize >= max_copy_len {
-                    copy_len = max_copy_len as u8;
+                if curr_copy_len >= max_copy_len {
+                    copy_len = max_copy_len;
                     break;
                 }
             }
@@ -195,15 +196,15 @@ fn compress_lzss(uncomp: &[u8]) -> Vec<u8> {
             op_code = 1;
         }
 
-        if copy_len < 3 {
+        i += if copy_len < 3 {
             comp[op_idx] |= op_code;
             comp.push(uncomp[i]);
-            i += 1;
+            1
         } else {
             comp.push((copy_offset + 0x3f0 - 18) as u8);
             comp.push(((copy_offset + 0x3f0 - 18) >> 4) as u8 & 0x30 | copy_len - 3);
-            i += copy_len as usize;
-        }
+            copy_len as usize
+        };
     }
     comp
 }
@@ -211,17 +212,13 @@ fn compress_lzss(uncomp: &[u8]) -> Vec<u8> {
 fn encrypt(key: [u8; 16], contents: &[u8], game: Game) -> Vec<u8> {
     let mut comp = compress_lzss(contents);
     encrypt_decrypt(key, &mut comp[20..]);
+    let file_crc = gen_crc(&contents[18..contents.len() - 18]);
+    let len = contents.len() as u32 - 18 - 18;
     comp.splice(
         0..20,
-        [
-            0x06091812,
-            game as u32,
-            gen_crc(&contents[18..contents.len() - 18]),
-            gen_crc(&key),
-            contents.len() as u32 - 18 - 18,
-        ]
-        .iter()
-        .flat_map(|num| num.to_le_bytes()),
+        [MAGIC, game as u32, file_crc, gen_crc(&key), len]
+            .iter()
+            .flat_map(|num| num.to_le_bytes()),
     );
     comp
 }
