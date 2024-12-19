@@ -1,5 +1,3 @@
-use std::cmp::max;
-
 use rayon::prelude::*;
 use simple_eyre::eyre::{eyre, Context, Report, Result};
 
@@ -159,19 +157,21 @@ fn search(idx: usize, uncomp: &[u8]) -> (u8, u16) {
     if idx + 17 >= uncomp.len() {
         return (0, 0);
     }
+    let filter = u16::from_ne_bytes(uncomp[idx..idx + 2].try_into().unwrap());
     let currcomp = u128::from_be_bytes(uncomp[idx + 2..idx + 18].try_into().unwrap());
     let mut copy_len = 0;
     let mut copy_offset = 0;
-    for c_idx in (idx.saturating_sub(1023)..idx).rev() {
-        if uncomp[idx] == uncomp[c_idx] && uncomp[idx + 1] == uncomp[c_idx + 1] {
-            let currcomp2 = u128::from_be_bytes(uncomp[c_idx + 2..c_idx + 18].try_into().unwrap());
-            let curr_copy_len = (currcomp2 ^ currcomp).leading_zeros() as u8 / 8 + 2;
-            if copy_len < curr_copy_len {
-                copy_len = curr_copy_len;
-                copy_offset = c_idx as u16 & 0x3ff;
-                if curr_copy_len == 18 {
-                    break;
-                }
+    for i in (idx.saturating_sub(1023)..idx)
+        .rev()
+        .filter(|i| u16::from_ne_bytes(uncomp[*i..*i + 2].try_into().unwrap()) == filter)
+    {
+        let currcomp2 = u128::from_be_bytes(uncomp[i + 2..i + 18].try_into().unwrap());
+        let curr_copy_len = (currcomp2 ^ currcomp).leading_zeros() as u8 / 8 + 2;
+        if copy_len < curr_copy_len {
+            copy_len = curr_copy_len;
+            copy_offset = i as u16 & 0x3ff;
+            if curr_copy_len == 18 {
+                break;
             }
         }
     }
@@ -185,8 +185,8 @@ fn compress_lzss(uncomp: &[u8]) -> Vec<u8> {
     let mut consume = 0;
 
     for i in 0..uncomp.len() {
-        let (copy_len, copy_offset) = search(i, uncomp);
         if consume == 0 {
+            let (copy_len, copy_offset) = search(i, uncomp);
             op_code <<= 1;
             if op_code == 0 {
                 op_idx = comp.len();
