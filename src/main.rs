@@ -215,38 +215,37 @@ fn main() -> Result<()> {
         .filter(|entry| entry.file_type().is_file())
         .map(|entry| entry.path().to_path_buf())
         .map(|file| (file.clone(), std::fs::read(file).unwrap()))
-        .map(|mut file| -> Result<()> {
-            let res = if let Ok(header) = Header::try_from(file.1.as_slice()) {
+        .map(|(mut path, mut data)| -> Result<()> {
+            let res = if let Ok(header) = Header::try_from(data.as_slice()) {
                 let ext = match header.game {
                     Game::ADK => "adk.",
                     Game::DNG => "dng.",
                 };
-                let file_name = file.0.file_name().unwrap().to_str().unwrap();
+                let file_name = path.file_name().unwrap().to_str().unwrap();
                 let key = make_key(file_name, header.game);
-                file.0
-                    .set_extension(ext.to_owned() + file.0.extension().unwrap().to_str().unwrap());
-                decrypt(key, header, &mut file.1[20..]).context(format!(
+                path.set_extension(ext.to_owned() + path.extension().unwrap().to_str().unwrap());
+                decrypt(key, header, &mut data[20..]).context(format!(
                     "Error occurred while decrypting {}",
-                    file.0.display()
+                    path.display()
                 ))?
             } else {
-                let file_stem = file.0.file_stem().unwrap().to_str().unwrap();
+                let file_stem = path.file_stem().unwrap().to_str().unwrap();
                 let game = match &file_stem[file_stem.len() - 4..] {
                     ".adk" => Game::ADK,
                     ".dng" => Game::DNG,
                     _ => return Ok(()),
                 };
-                file.0.set_file_name(
+                path.set_file_name(
                     file_stem[..file_stem.len() - 3].to_owned()
-                        + file.0.extension().unwrap().to_str().unwrap(),
+                        + path.extension().unwrap().to_str().unwrap(),
                 );
-                let file_name = file.0.file_name().unwrap().to_str().unwrap();
-                file.1.splice(0..0, [0x20; 16]);
-                file.1.extend_from_slice(&[0; 18]);
-                encrypt(make_key(file_name, game), &file.1, game)
+                let file_name = path.file_name().unwrap().to_str().unwrap();
+                data.splice(0..0, [0x20; 16]);
+                data.extend_from_slice(&[0; 18]);
+                encrypt(make_key(file_name, game), &data, game)
             };
-            std::fs::write(&file.0, &res)
-                .wrap_err(format!("could not write to {}", file.0.display()))?;
+            std::fs::write(&path, &res)
+                .wrap_err(format!("could not write to {}", path.display()))?;
             Ok(())
         })
         .find_any(Result::is_err)
@@ -268,13 +267,13 @@ mod tests {
             .filter(|entry| entry.file_type().is_file())
             .map(|entry| entry.path().to_path_buf())
             .map(|file| (file.clone(), std::fs::read(file).unwrap()))
-            .map(|mut file| -> Result<isize> {
-                if let Ok(header) = Header::try_from(file.1.as_slice()) {
-                    let path = file.0.display();
-                    let file_name = file.0.file_name().unwrap().to_str().unwrap();
+            .map(|(path, mut data)| -> Result<isize> {
+                if let Ok(header) = Header::try_from(data.as_slice()) {
+                    let display = path.display();
+                    let file_name = path.file_name().unwrap().to_str().unwrap();
                     let key = make_key(file_name, header.game);
-                    let mut res = decrypt(key, header, &mut file.1[20..])
-                        .wrap_err(format!("Error occurred in 1. decryption of {path}"))?;
+                    let mut res = decrypt(key, header, &mut data[20..])
+                        .wrap_err(format!("Error occurred in 1. decryption of {display}"))?;
                     res.splice(0..0, [0x20; 16]);
                     res.extend_from_slice(&[0; 18]);
 
@@ -282,12 +281,12 @@ mod tests {
                     assert_eq!(
                         header,
                         Header::try_from(contents.as_slice()).wrap_err(format!(
-                            "Error occurred while constructing 2. header of {path}"
+                            "Error occurred while constructing 2. header of {display}"
                         ))?
                     );
                     decrypt(key, header, &mut contents[20..])
-                        .wrap_err(format!("Error occurred in 2. decryption of {path}"))?;
-                    return Ok(file.1.len() as isize - contents.len() as isize);
+                        .wrap_err(format!("Error occurred in 2. decryption of {display}"))?;
+                    return Ok(data.len() as isize - contents.len() as isize);
                 }
                 Ok(0)
             })
