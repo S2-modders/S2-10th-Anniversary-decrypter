@@ -1,6 +1,14 @@
 use rayon::prelude::*;
 use simple_eyre::eyre::{eyre, Context, Report, Result};
 
+macro_rules! error_if {
+    ($condition:expr, $error_msg:expr) => {
+        if $condition {
+            return Err($error_msg);
+        }
+    };
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum Game {
     DNG = u32::from_le_bytes(*b"rc00") as isize,
@@ -16,24 +24,20 @@ struct Header {
 }
 impl TryFrom<&[u8]> for Header {
     type Error = Report;
-    fn try_from(vec: &[u8]) -> Result<Self> {
-        let len = vec.len();
-        if len < 20 {
-            return Err(eyre!("File too short to have a proper header: {len} < 20"));
-        }
-        let magic = u32::from_le_bytes(vec[0..4].try_into().unwrap());
-        if magic != MAGIC {
-            return Err(eyre!("Not an encrypted file ({magic:#x} != 0x6091812)"));
-        }
+    fn try_from(header: &[u8]) -> Result<Self> {
+        let len = header.len();
+        error_if!(len < 20, eyre!("file too short: {len} < 20"));
+        let magic = u32::from_le_bytes(header[0..4].try_into().unwrap());
+        error_if!(magic != MAGIC, eyre!("not encrypted: {magic} != {MAGIC}"));
         Ok(Header {
-            game: match u32::from_le_bytes(vec[4..8].try_into().unwrap()) {
+            game: match u32::from_le_bytes(header[4..8].try_into().unwrap()) {
                 0x6b646173 => Game::ADK,
                 0x30306372 => Game::DNG,
                 fcc => return Err(eyre!("No matching game header found for fcc {fcc:#x}")),
             },
-            file_crc: u32::from_le_bytes(vec[8..12].try_into().unwrap()),
-            name_crc: u32::from_le_bytes(vec[12..16].try_into().unwrap()),
-            size: u32::from_le_bytes(vec[16..20].try_into().unwrap()),
+            file_crc: u32::from_le_bytes(header[8..12].try_into().unwrap()),
+            name_crc: u32::from_le_bytes(header[12..16].try_into().unwrap()),
+            size: u32::from_le_bytes(header[16..20].try_into().unwrap()),
         })
     }
 }
@@ -132,22 +136,16 @@ fn make_key(file_name: &str, game: Game) -> [u8; 16] {
 
 fn decrypt(key: [u8; 16], header: Header, contents: &mut [u8]) -> Result<Vec<u8>> {
     let crc = gen_crc(&key);
-    let expected = header.name_crc;
-    if crc != expected {
-        return Err(eyre!("file name crc mismatch: {crc:#x} != {expected:#x}"));
-    }
+    let expect = header.name_crc;
+    error_if!(crc != expect, eyre!("name crc mismatch: {crc} != {expect}"));
     encrypt_decrypt(key, contents);
-    let expected_len = header.size.try_into().unwrap();
-    let res = decompress(contents, expected_len);
+    let expect = header.size.try_into().unwrap();
+    let res = decompress(contents, expect);
     let len = res.len();
-    if len != expected_len {
-        return Err(eyre!("file size mismatch: {len} != {expected_len}"));
-    }
-    let file_crc = gen_crc(&res);
-    let expected = header.file_crc;
-    if file_crc != expected {
-        return Err(eyre!("file crc mismatch: {file_crc:#x} != {expected:#x}"));
-    }
+    error_if!(len != expect, eyre!("size mismatch: {len} != {expect}"));
+    let crc = gen_crc(&res);
+    let expect = header.file_crc;
+    error_if!(crc != expect, eyre!("data crc mismatch: {crc} != {expect}"));
     Ok(res)
 }
 
@@ -198,7 +196,7 @@ fn encrypt(key: [u8; 16], contents: &[u8], game: Game) -> Vec<u8> {
     let len = contents.len() as u32 - 16 - 18;
     comp.splice(
         0..20,
-        [MAGIC, game as u32, file_crc, gen_crc(&key), len]
+        [0x06091812, game as u32, file_crc, gen_crc(&key), len]
             .iter()
             .flat_map(|num| num.to_le_bytes()),
     );
