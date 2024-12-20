@@ -1,5 +1,3 @@
-use std::{cmp::min, usize};
-
 use rayon::prelude::*;
 use simple_eyre::eyre::{eyre, Context, Report, Result};
 
@@ -156,55 +154,42 @@ fn decrypt(key: [u8; 16], header: Header, contents: &mut [u8]) -> Result<Vec<u8>
     Ok(res)
 }
 
-fn compress_lzss(uncomp: &[u8]) -> Vec<u8> {
-    let mut comp = Vec::with_capacity(uncomp.len());
+fn compress_lzss(u: &[u8]) -> Vec<u8> {
+    let mut comp = Vec::with_capacity(u.len());
     comp.extend_from_slice(&[0; 20]);
     let mut op_idx = 0;
-    let mut op_code = 0;
+    let mut op_code = 1u8;
 
     let mut i = 16;
-    while i < uncomp.len() - 18 {
-        let max_copy_len = min(uncomp.len() - 18 - i, 18) as u8;
-        let filter = u16::from_ne_bytes(uncomp[i..i + 2].try_into().unwrap());
-        let currcomp = u128::from_be_bytes(uncomp[i + 2..i + 18].try_into().unwrap());
-        let mut copy_len = 0;
-        let mut copy_offset = 0;
-        for (j, curr_copy_len) in (i.saturating_sub(1023)..i)
-            .rev()
-            .filter(|j| u16::from_ne_bytes(uncomp[*j..*j + 2].try_into().unwrap()) == filter)
-            .map(|j| {
-                (
-                    j,
-                    u128::from_be_bytes(uncomp[j + 2..j + 18].try_into().unwrap()),
-                )
-            })
-            .map(|(j, currcomp2)| (j, (currcomp2 ^ currcomp).leading_zeros() as u8 / 8 + 2))
-        {
-            if copy_len < curr_copy_len {
-                copy_len = curr_copy_len;
-                copy_offset = j;
-                if curr_copy_len >= max_copy_len {
-                    copy_len = max_copy_len;
-                    break;
-                }
-            }
-        }
-        op_code <<= 1;
-        if op_code == 0 {
+    while i < u.len() - 18 {
+        if op_code == 1 {
             op_idx = comp.len();
             comp.push(0);
-            op_code = 1;
         }
 
-        i += if copy_len < 3 {
-            comp[op_idx] |= op_code;
-            comp.push(uncomp[i]);
-            1
-        } else {
-            comp.push((copy_offset + 0x3f0 - 16) as u8);
-            comp.push(((copy_offset + 0x3f0 - 16) >> 4) as u8 & 0x30 | copy_len - 3);
-            copy_len as usize
+        let filter = u16::from_ne_bytes(u[i..i + 2].try_into().unwrap());
+        let currcomp = u128::from_be_bytes(u[i + 2..i + 18].try_into().unwrap());
+        i += match (i.saturating_sub(1023)..i)
+            .rev()
+            .filter(|j| u16::from_ne_bytes(u[*j..*j + 2].try_into().unwrap()) == filter)
+            .map(|j| (u128::from_be_bytes(u[j + 2..j + 18].try_into().unwrap()), j))
+            .map(|(currcomp2, j)| ((currcomp2 ^ currcomp).leading_zeros() as usize, j))
+            .max()
+            .map(|(len, offset)| ((len / 8 + 2).min(u.len() - 18 - i), offset + 0x3f0 - 16))
+            .filter(|(len, _)| *len >= 3)
+        {
+            Some((copy_len, copy_offset)) => {
+                comp.push(copy_offset as u8);
+                comp.push((copy_offset >> 4) as u8 & 0x30 | copy_len as u8 - 3);
+                copy_len
+            }
+            None => {
+                comp[op_idx] |= op_code;
+                comp.push(u[i]);
+                1
+            }
         };
+        op_code = op_code.rotate_left(1);
     }
     comp
 }
