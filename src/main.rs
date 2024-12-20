@@ -245,7 +245,7 @@ fn main() -> Result<()> {
                 encrypt(make_key(file_name, game), &data, game)
             };
             std::fs::write(&path, &res)
-                .wrap_err(format!("could not write to {}", path.display()))?;
+                .context(format!("could not write to {}", path.display()))?;
             Ok(())
         })
         .find_any(Result::is_err)
@@ -273,19 +273,19 @@ mod tests {
                     let file_name = path.file_name().unwrap().to_str().unwrap();
                     let key = make_key(file_name, header.game);
                     let mut res = decrypt(key, header, &mut data[20..])
-                        .wrap_err(format!("Error occurred in 1. decryption of {display}"))?;
+                        .context(format!("Error occurred in 1. decryption of {display}"))?;
                     res.splice(0..0, [0x20; 16]);
                     res.extend_from_slice(&[0; 18]);
 
                     let mut contents = encrypt(key, &res, header.game);
                     assert_eq!(
                         header,
-                        Header::try_from(contents.as_slice()).wrap_err(format!(
+                        Header::try_from(contents.as_slice()).context(format!(
                             "Error occurred while constructing 2. header of {display}"
                         ))?
                     );
                     decrypt(key, header, &mut contents[20..])
-                        .wrap_err(format!("Error occurred in 2. decryption of {display}"))?;
+                        .context(format!("Error occurred in 2. decryption of {display}"))?;
                     return Ok(data.len() as isize - contents.len() as isize);
                 }
                 Ok(0)
