@@ -83,7 +83,7 @@ fn gen_crc(data: &[u8]) -> u32 {
 
 fn decompress(cmp: &[u8], expected_len: usize) -> Vec<u8> {
     let mut dc = Vec::with_capacity(expected_len);
-    dc.extend_from_slice(&[0x20; 18]);
+    dc.extend_from_slice(&[0x20; 16]);
     let mut mode = 0;
     let mut iter = cmp.iter();
     while let Some(&curr) = iter.next() {
@@ -99,7 +99,7 @@ fn decompress(cmp: &[u8], expected_len: usize) -> Vec<u8> {
             mode >>= 1;
         }
     }
-    dc[18..].to_vec()
+    dc[16..].to_vec()
 }
 
 fn encrypt_decrypt(key: [u8; 16], data: &mut [u8]) {
@@ -162,7 +162,7 @@ fn compress_lzss(uncomp: &[u8]) -> Vec<u8> {
     let mut op_idx = 0;
     let mut op_code = 0;
 
-    let mut i = 18;
+    let mut i = 16;
     while i < uncomp.len() - 18 {
         let max_copy_len = min(uncomp.len() - 18 - i, 18) as u8;
         let filter = u16::from_ne_bytes(uncomp[i..i + 2].try_into().unwrap());
@@ -201,8 +201,8 @@ fn compress_lzss(uncomp: &[u8]) -> Vec<u8> {
             comp.push(uncomp[i]);
             1
         } else {
-            comp.push((copy_offset + 0x3f0 - 18) as u8);
-            comp.push(((copy_offset + 0x3f0 - 18) >> 4) as u8 & 0x30 | copy_len - 3);
+            comp.push((copy_offset + 0x3f0 - 16) as u8);
+            comp.push(((copy_offset + 0x3f0 - 16) >> 4) as u8 & 0x30 | copy_len - 3);
             copy_len as usize
         };
     }
@@ -212,8 +212,8 @@ fn compress_lzss(uncomp: &[u8]) -> Vec<u8> {
 fn encrypt(key: [u8; 16], contents: &[u8], game: Game) -> Vec<u8> {
     let mut comp = compress_lzss(contents);
     encrypt_decrypt(key, &mut comp[20..]);
-    let file_crc = gen_crc(&contents[18..contents.len() - 18]);
-    let len = contents.len() as u32 - 18 - 18;
+    let file_crc = gen_crc(&contents[16..contents.len() - 18]);
+    let len = contents.len() as u32 - 16 - 18;
     comp.splice(
         0..20,
         [MAGIC, game as u32, file_crc, gen_crc(&key), len]
@@ -261,7 +261,7 @@ fn main() -> Result<()> {
                         + file.0.extension().unwrap().to_str().unwrap(),
                 );
                 let file_name = file.0.file_name().unwrap().to_str().unwrap();
-                file.1.splice(0..0, [0x20; 18]);
+                file.1.splice(0..0, [0x20; 16]);
                 file.1.extend_from_slice(&[0; 18]);
                 encrypt(make_key(file_name, game), &file.1, game)
             };
@@ -295,7 +295,7 @@ mod tests {
                     let key = make_key(file_name, header.game);
                     let mut res = decrypt(key, header, &mut file.1[20..])
                         .wrap_err(format!("Error occurred in 1. decryption of {path}"))?;
-                    res.splice(0..0, [0x20; 18]);
+                    res.splice(0..0, [0x20; 16]);
                     res.extend_from_slice(&[0; 18]);
 
                     let mut contents = encrypt(key, &res, header.game);
