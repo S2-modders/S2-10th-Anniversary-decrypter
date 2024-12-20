@@ -48,12 +48,10 @@ struct Random {
 impl Random {
     fn new(crc: u32) -> Self {
         let mut seed = crc & 0x7fffffff;
-        for i in 5..13 - seed.count_ones() as i32 {
-            seed |= 1 << (17 + i - 2 * i * (i & 1));
-        }
-        for i in 5..seed.count_ones() as i32 - 19 {
-            seed &= !(1 << (17 + i - 2 * i * (i & 1)));
-        }
+        seed = (5..13 - seed.count_ones() as i32)
+            .fold(seed, |seed, i| seed | 1 << (17 + i - 2 * i * (i & 1)));
+        seed = (5..seed.count_ones() as i32 - 19)
+            .fold(seed, |seed, i| seed & !(1 << (17 + i - 2 * i * (i & 1))));
         Random { seed }
     }
 
@@ -73,11 +71,8 @@ fn gen_crc(data: &[u8]) -> u32 {
         let t = (div ^ u32::from_le_bytes(i.try_into().unwrap())).to_le_bytes();
         R0[t[3] as usize] ^ R1[t[2] as usize] ^ R2[t[1] as usize] ^ R3[t[0] as usize]
     });
-    !data
-        .chunks_exact(4)
-        .remainder()
-        .iter()
-        .fold(div, |div, i| (div >> 8) ^ R0[(i ^ div as u8) as usize])
+    let remainder = data.chunks_exact(4).remainder().iter();
+    !remainder.fold(div, |div, i| (div >> 8) ^ R0[(i ^ div as u8) as usize])
 }
 
 fn decompress(cmp: &[u8], expected_len: usize) -> Vec<u8> {
@@ -192,14 +187,10 @@ fn compress_lzss(u: &[u8]) -> Vec<u8> {
 fn encrypt(key: [u8; 16], contents: &[u8], game: Game) -> Vec<u8> {
     let mut comp = compress_lzss(contents);
     encrypt_decrypt(key, &mut comp[20..]);
-    let file_crc = gen_crc(&contents[16..contents.len() - 18]);
-    let len = contents.len() as u32 - 16 - 18;
-    comp.splice(
-        0..20,
-        [0x06091812, game as u32, file_crc, gen_crc(&key), len]
-            .iter()
-            .flat_map(|num| num.to_le_bytes()),
-    );
+    let data = &contents[16..contents.len() - 18];
+    let len = data.len() as u32;
+    let header = [MAGIC, game as u32, gen_crc(data), gen_crc(&key), len];
+    comp.splice(0..20, header.iter().flat_map(|num| num.to_le_bytes()));
     comp
 }
 
