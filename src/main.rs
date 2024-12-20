@@ -60,23 +60,20 @@ impl Random {
     }
 }
 
-const RNUM0: [u32; 256] = include_bytes_plus::include_bytes!("rnum0.bin" as u32);
-const RNUM1: [u32; 256] = include_bytes_plus::include_bytes!("rnum1.bin" as u32);
-const RNUM2: [u32; 256] = include_bytes_plus::include_bytes!("rnum2.bin" as u32);
-const RNUM3: [u32; 256] = include_bytes_plus::include_bytes!("rnum3.bin" as u32);
+const R0: [u32; 256] = include_bytes_plus::include_bytes!("rnum0.bin" as u32le);
+const R1: [u32; 256] = include_bytes_plus::include_bytes!("rnum1.bin" as u32le);
+const R2: [u32; 256] = include_bytes_plus::include_bytes!("rnum2.bin" as u32le);
+const R3: [u32; 256] = include_bytes_plus::include_bytes!("rnum3.bin" as u32le);
 fn gen_crc(data: &[u8]) -> u32 {
-    let mut div = 0xffffffffu32;
-    for i in (0..data.len() & !3).step_by(4) {
-        let tmp = div.to_le_bytes();
-        div = RNUM0[(tmp[3] ^ data[i + 3]) as usize]
-            ^ RNUM1[(tmp[2] ^ data[i + 2]) as usize]
-            ^ RNUM2[(tmp[1] ^ data[i + 1]) as usize]
-            ^ RNUM3[(tmp[0] ^ data[i]) as usize];
-    }
-    for i in data.len() & !3..data.len() {
-        div = (div >> 8) ^ RNUM0[(data[i] ^ div as u8) as usize];
-    }
-    !div
+    let div = data.chunks_exact(4).fold(u32::MAX, |div, i| {
+        let t = (div ^ u32::from_le_bytes(i.try_into().unwrap())).to_le_bytes();
+        R0[t[3] as usize] ^ R1[t[2] as usize] ^ R2[t[1] as usize] ^ R3[t[0] as usize]
+    });
+    !data
+        .chunks_exact(4)
+        .remainder()
+        .iter()
+        .fold(div, |div, i| (div >> 8) ^ R0[(i ^ div as u8) as usize])
 }
 
 fn decompress(cmp: &[u8], expected_len: usize) -> Vec<u8> {
