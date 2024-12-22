@@ -157,28 +157,27 @@ fn compress_lzss(u: &[u8]) -> Vec<u8> {
             comp.push(0);
         }
 
-        let filter = u16::from_ne_bytes(u[i..i + 2].try_into().unwrap());
         let currcomp = u128::from_be_bytes(u[i + 2..i + 18].try_into().unwrap());
-        i += match (i.saturating_sub(1023)..i)
-            .rev()
-            .filter(|j| u16::from_ne_bytes(u[*j..*j + 2].try_into().unwrap()) == filter)
-            .map(|j| (u128::from_be_bytes(u[j + 2..j + 18].try_into().unwrap()), j))
-            .map(|(currcomp2, j)| ((currcomp2 ^ currcomp).leading_zeros() as usize, j))
+        let min = i.saturating_sub(1023) as u16;
+        i += u[i.saturating_sub(1023)..i + 17]
+            .windows(18)
+            .enumerate()
+            .filter(|(_, window)| window[..2] == u[i..i + 2])
+            .map(|(j, window)| (u128::from_be_bytes(window[2..18].try_into().unwrap()), j))
+            .map(|(currcomp2, j)| ((currcomp2 ^ currcomp).leading_zeros() as usize, j as u16))
             .max()
-            .map(|(len, offset)| ((len / 8 + 2).min(u.len() - 18 - i), offset + 0x3f0 - 16))
+            .map(|(len, offset)| ((len / 8 + 2).min(u.len() - 18 - i), min + offset + 0x3e0))
             .filter(|(len, _)| *len >= 3)
-        {
-            Some((copy_len, copy_offset)) => {
+            .map(|(copy_len, copy_offset)| {
                 comp.push(copy_offset as u8);
                 comp.push((copy_offset >> 4) as u8 & 0x30 | copy_len as u8 - 3);
                 copy_len
-            }
-            None => {
+            })
+            .unwrap_or_else(|| {
                 comp[op_idx] |= op_code;
                 comp.push(u[i]);
                 1
-            }
-        };
+            });
         op_code = op_code.rotate_left(1);
     }
     comp
