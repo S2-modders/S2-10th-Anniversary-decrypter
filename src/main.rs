@@ -1,45 +1,25 @@
 use rayon::prelude::*;
-use simple_eyre::eyre::{eyre, Context, Report, Result};
+use simple_eyre::eyre::{eyre, Context, Result};
+use zerocopy::{transmute, Immutable, IntoBytes, KnownLayout, TryFromBytes};
 
-macro_rules! error_if {
-    ($condition:expr, $error_msg:expr) => {
-        if $condition {
-            return Err($error_msg);
-        }
-    };
+#[derive(TryFromBytes, Immutable, IntoBytes)]
+#[repr(u32)]
+enum Magic {
+    Magic = 0x06091812,
 }
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, TryFromBytes, Immutable, IntoBytes)]
+#[repr(u32)]
 enum Game {
-    DNG = u32::from_le_bytes(*b"rc00") as isize,
-    ADK = u32::from_le_bytes(*b"sadk") as isize,
+    DNG = u32::from_le_bytes(*b"rc00"),
+    ADK = u32::from_le_bytes(*b"sadk"),
 }
-const MAGIC: u32 = 0x06091812;
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(KnownLayout, TryFromBytes, Immutable, IntoBytes)]
 struct Header {
+    magic: Magic,
     game: Game,
     file_crc: u32,
     name_crc: u32,
     size: u32,
-}
-impl TryFrom<&[u8]> for Header {
-    type Error = Report;
-    fn try_from(header: &[u8]) -> Result<Self> {
-        let len = header.len();
-        error_if!(len < 20, eyre!("file too short: {len} < 20"));
-        let magic = u32::from_le_bytes(header[0..4].try_into().unwrap());
-        error_if!(magic != MAGIC, eyre!("not encrypted: {magic} != {MAGIC}"));
-        Ok(Header {
-            game: match u32::from_le_bytes(header[4..8].try_into().unwrap()) {
-                0x6b646173 => Game::ADK,
-                0x30306372 => Game::DNG,
-                fcc => return Err(eyre!("No matching game header found for fcc {fcc:#x}")),
-            },
-            file_crc: u32::from_le_bytes(header[8..12].try_into().unwrap()),
-            name_crc: u32::from_le_bytes(header[12..16].try_into().unwrap()),
-            size: u32::from_le_bytes(header[16..20].try_into().unwrap()),
-        })
-    }
 }
 
 struct Random {
@@ -62,11 +42,11 @@ impl Random {
     }
 }
 
-const R0: [u32; 256] = include_bytes_plus::include_bytes!("rnum0.bin" as u32le);
-const R1: [u32; 256] = include_bytes_plus::include_bytes!("rnum1.bin" as u32le);
-const R2: [u32; 256] = include_bytes_plus::include_bytes!("rnum2.bin" as u32le);
-const R3: [u32; 256] = include_bytes_plus::include_bytes!("rnum3.bin" as u32le);
 fn gen_crc(data: &[u8]) -> u32 {
+    const R0: [u32; 256] = transmute!(*include_bytes!("../rnum0.bin"));
+    const R1: [u32; 256] = transmute!(*include_bytes!("../rnum1.bin"));
+    const R2: [u32; 256] = transmute!(*include_bytes!("../rnum2.bin"));
+    const R3: [u32; 256] = transmute!(*include_bytes!("../rnum3.bin"));
     let div = data.chunks_exact(4).fold(u32::MAX, |div, i| {
         let t = (div ^ u32::from_le_bytes(i.try_into().unwrap())).to_le_bytes();
         R0[t[3] as usize] ^ R1[t[2] as usize] ^ R2[t[1] as usize] ^ R3[t[0] as usize]
@@ -129,18 +109,24 @@ fn make_key(file_name: &str, game: Game) -> [u8; 16] {
     }
 }
 
-fn decrypt(key: [u8; 16], header: Header, contents: &mut [u8]) -> Result<Vec<u8>> {
+fn decrypt(key: [u8; 16], header: &Header, contents: &mut [u8]) -> Result<Vec<u8>> {
     let crc = gen_crc(&key);
     let expect = header.name_crc;
-    error_if!(crc != expect, eyre!("name crc mismatch: {crc} != {expect}"));
+    if crc != expect {
+        return Err(eyre!("name crc mismatch: {crc} != {expect}"));
+    }
     encrypt_decrypt(key, contents);
     let expect = header.size.try_into().unwrap();
     let res = decompress(contents, expect);
     let len = res.len();
-    error_if!(len != expect, eyre!("size mismatch: {len} != {expect}"));
+    if len != expect {
+        return Err(eyre!("size mismatch: {len} != {expect}"));
+    }
     let crc = gen_crc(&res);
     let expect = header.file_crc;
-    error_if!(crc != expect, eyre!("data crc mismatch: {crc} != {expect}"));
+    if crc != expect {
+        return Err(eyre!("data crc mismatch: {crc} != {expect}"));
+    }
     Ok(res)
 }
 
@@ -188,7 +174,8 @@ fn encrypt(key: [u8; 16], contents: &[u8], game: Game) -> Vec<u8> {
     encrypt_decrypt(key, &mut comp[20..]);
     let data = &contents[16..contents.len() - 18];
     let len = data.len() as u32;
-    let header = [MAGIC, game as u32, gen_crc(data), gen_crc(&key), len];
+    let crc = gen_crc(&key);
+    let header = [Magic::Magic as u32, game as u32, gen_crc(data), crc, len];
     comp.splice(0..20, header.iter().flat_map(|num| num.to_le_bytes()));
     comp
 }
@@ -206,7 +193,7 @@ fn main() -> Result<()> {
         .map(|entry| entry.path().to_path_buf())
         .map(|file| (file.clone(), std::fs::read(file).unwrap()))
         .map(|(mut path, mut data)| -> Result<()> {
-            let res = if let Ok(header) = Header::try_from(data.as_slice()) {
+            let res = if let Ok((header, data)) = Header::try_mut_from_prefix(&mut data) {
                 let ext = match header.game {
                     Game::ADK => "adk.",
                     Game::DNG => "dng.",
@@ -214,7 +201,7 @@ fn main() -> Result<()> {
                 let file_name = path.file_name().unwrap().to_str().unwrap();
                 let key = make_key(file_name, header.game);
                 path.set_extension(ext.to_owned() + path.extension().unwrap().to_str().unwrap());
-                decrypt(key, header, &mut data[20..]).context(format!(
+                decrypt(key, header, data).context(format!(
                     "Error occurred while decrypting {}",
                     path.display()
                 ))?
@@ -258,22 +245,16 @@ mod tests {
             .map(|entry| entry.path().to_path_buf())
             .map(|file| (file.clone(), std::fs::read(file).unwrap()))
             .map(|(path, mut data)| -> Result<isize> {
-                if let Ok(header) = Header::try_from(data.as_slice()) {
+                if let Ok((header, data)) = Header::try_mut_from_prefix(&mut data) {
                     let display = path.display();
                     let file_name = path.file_name().unwrap().to_str().unwrap();
                     let key = make_key(file_name, header.game);
-                    let mut res = decrypt(key, header, &mut data[20..])
+                    let mut res = decrypt(key, header, data)
                         .context(format!("Error occurred in 1. decryption of {display}"))?;
                     res.splice(0..0, [0x20; 16]);
                     res.extend_from_slice(&[0; 18]);
 
                     let mut contents = encrypt(key, &res, header.game);
-                    assert_eq!(
-                        header,
-                        Header::try_from(contents.as_slice()).context(format!(
-                            "Error occurred while constructing 2. header of {display}"
-                        ))?
-                    );
                     decrypt(key, header, &mut contents[20..])
                         .context(format!("Error occurred in 2. decryption of {display}"))?;
                     return Ok(data.len() as isize - contents.len() as isize);
