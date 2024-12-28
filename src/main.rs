@@ -57,7 +57,7 @@ fn gen_crc(data: &[u8]) -> u32 {
 
 fn decompress(cmp: &[u8], expected_len: usize) -> Vec<u8> {
     let mut dc = Vec::with_capacity(expected_len);
-    dc.extend_from_slice(&[0x20; 16]);
+    dc.extend_from_slice(&[b' '; 16]);
     let mut mode = 0;
     let mut iter = cmp.iter();
     while let Some(&curr) = iter.next() {
@@ -217,7 +217,7 @@ fn main() -> Result<()> {
                         + path.extension().unwrap().to_str().unwrap(),
                 );
                 let file_name = path.file_name().unwrap().to_str().unwrap();
-                data.splice(0..0, [0x20; 16]);
+                data.splice(0..0, [b' '; 16]);
                 data.extend_from_slice(&[0; 18]);
                 encrypt(make_key(file_name, game), &data, game)
             };
