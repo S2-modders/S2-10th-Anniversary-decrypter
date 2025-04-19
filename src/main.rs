@@ -1,3 +1,4 @@
+use minstd::MINSTD0;
 use rayon::prelude::*;
 use simple_eyre::eyre::{eyre, Context, Result};
 use zerocopy::{transmute, Immutable, IntoBytes, KnownLayout, TryFromBytes};
@@ -22,24 +23,13 @@ struct Header {
     size: u32,
 }
 
-struct Random {
-    seed: u32,
-}
-impl Random {
-    fn new(crc: u32) -> Self {
-        let mut seed = crc & 0x7fffffff;
-        seed = (5..13 - seed.count_ones() as i32)
-            .fold(seed, |seed, i| seed | 1 << (17 + i - 2 * i * (i & 1)));
-        seed = (5..seed.count_ones() as i32 - 19)
-            .fold(seed, |seed, i| seed & !(1 << (17 + i - 2 * i * (i & 1))));
-        Random { seed }
-    }
-
-    fn next_int(&mut self) -> u32 {
-        let mul = (self.seed as u64) * 7u64.pow(5);
-        self.seed = (mul as u32 & 0x7fffffff) + (mul >> 31) as u32;
-        self.seed
-    }
+fn make_random(seed: u32) -> MINSTD0 {
+    let mut seed = seed & 0x7fffffff;
+    seed = (5..13 - seed.count_ones() as i32)
+        .fold(seed, |seed, i| seed | 1 << (17 + i - 2 * i * (i & 1)));
+    seed = (5..seed.count_ones() as i32 - 19)
+        .fold(seed, |seed, i| seed & !(1 << (17 + i - 2 * i * (i & 1))));
+    MINSTD0::seed(seed as i32)
 }
 
 fn gen_crc(data: &[u8]) -> u32 {
@@ -77,20 +67,20 @@ fn decompress(cmp: &[u8], expected_len: usize) -> Vec<u8> {
 }
 
 fn encrypt_decrypt(key: [u8; 16], data: &mut [u8]) {
-    let mut random = Random::new(gen_crc(&key));
+    let mut random = make_random(gen_crc(&key));
 
-    let flavor1: Vec<u8> = (0..(random.next_int() & 0x7F) + 0x80)
-        .map(|_| random.next_int() as u8)
+    let flavor1: Vec<u8> = (0..(random.next() & 0x7F) + 0x80)
+        .map(|_| random.next() as u8)
         .collect();
     data.iter_mut()
         .zip(flavor1.iter().cycle())
         .for_each(|(byte1, byte2)| *byte1 ^= byte2);
 
-    let flavor2: Vec<u8> = (0..(random.next_int() & 0xF) + 0x11)
-        .map(|_| random.next_int() as u8)
+    let flavor2: Vec<u8> = (0..(random.next() & 0xF) + 0x11)
+        .map(|_| random.next() as u8)
         .collect();
-    for i in (random.next_int() as usize % data.len()..data.len())
-        .step_by((random.next_int() as usize & 0x1FFF) + 0x2000)
+    for i in (random.next() as usize % data.len()..data.len())
+        .step_by((random.next() as usize & 0x1FFF) + 0x2000)
     {
         data[i] ^= flavor2[(key[i % key.len()] as usize ^ i) % flavor2.len()];
     }
@@ -102,10 +92,10 @@ fn make_key(file_name: &str, game: Game) -> [u8; 16] {
         Game::Dng => 0xc95946cad9f04f0aa100aab8cbe8db6bu128.to_be_bytes(),
     };
     let file_name = file_name.to_ascii_lowercase();
-    let mut rng = Random::new(gen_crc(&encoding_rs::WINDOWS_1252.encode(&file_name).0));
+    let mut rng = make_random(gen_crc(&encoding_rs::WINDOWS_1252.encode(&file_name).0));
     match &file_name[file_name.len() - 4..] {
         ".s2m" | ".sav" => key,
-        _ => key.map(|byte| byte ^ rng.next_int() as u8),
+        _ => key.map(|byte| byte ^ rng.next() as u8),
     }
 }
 
