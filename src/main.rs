@@ -10,8 +10,8 @@ enum Magic {
 #[derive(Copy, Clone, TryFromBytes, Immutable, IntoBytes)]
 #[repr(u32)]
 enum Game {
-    DNG = u32::from_le_bytes(*b"rc00"),
-    ADK = u32::from_le_bytes(*b"sadk"),
+    Dng = u32::from_le_bytes(*b"rc00"),
+    Adk = u32::from_le_bytes(*b"sadk"),
 }
 #[derive(KnownLayout, TryFromBytes, Immutable, IntoBytes)]
 struct Header {
@@ -98,13 +98,13 @@ fn encrypt_decrypt(key: [u8; 16], data: &mut [u8]) {
 
 fn make_key(file_name: &str, game: Game) -> [u8; 16] {
     let key = match game {
-        Game::ADK => 0xbd8cc2bd30674bf8b49b1bf9f6822ef4u128.to_be_bytes(),
-        Game::DNG => 0xc95946cad9f04f0aa100aab8cbe8db6bu128.to_be_bytes(),
+        Game::Adk => 0xbd8cc2bd30674bf8b49b1bf9f6822ef4u128.to_be_bytes(),
+        Game::Dng => 0xc95946cad9f04f0aa100aab8cbe8db6bu128.to_be_bytes(),
     };
     let file_name = file_name.to_ascii_lowercase();
     let mut rng = Random::new(gen_crc(&encoding_rs::WINDOWS_1252.encode(&file_name).0));
     match &file_name[file_name.len() - 4..] {
-        ".s2m" | ".sav" => return key,
+        ".s2m" | ".sav" => key,
         _ => key.map(|byte| byte ^ rng.next_int() as u8),
     }
 }
@@ -195,8 +195,8 @@ fn main() -> Result<()> {
         .map(|(mut path, mut data)| -> Result<()> {
             let res = if let Ok((header, data)) = Header::try_mut_from_prefix(&mut data) {
                 let ext = match header.game {
-                    Game::ADK => "adk.",
-                    Game::DNG => "dng.",
+                    Game::Adk => "adk.",
+                    Game::Dng => "dng.",
                 };
                 let file_name = path.file_name().unwrap().to_str().unwrap();
                 let key = make_key(file_name, header.game);
@@ -208,8 +208,8 @@ fn main() -> Result<()> {
             } else {
                 let file_stem = path.file_stem().unwrap().to_str().unwrap();
                 let game = match &file_stem[file_stem.len() - 4..] {
-                    ".adk" => Game::ADK,
-                    ".dng" => Game::DNG,
+                    ".adk" => Game::Adk,
+                    ".dng" => Game::Dng,
                     _ => return Ok(()),
                 };
                 path.set_file_name(
