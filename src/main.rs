@@ -1,4 +1,6 @@
-use compression::prelude::{DecodeExt, LzssCode, LzssDecoder};
+use std::cmp::Ordering;
+
+use compression::prelude::{Action, DecodeExt, EncodeExt, LzssCode, LzssDecoder, LzssEncoder};
 use minstd::MINSTD0;
 use rayon::prelude::*;
 use simple_eyre::eyre::{eyre, Context, Result};
@@ -132,32 +134,22 @@ fn decrypt(key: [u8; 16], header: &Header, contents: &mut [u8]) -> Result<Vec<u8
 }
 
 fn compress_lzss(u: &[u8]) -> Vec<u8> {
-    pub fn comparison(lhs: LzssCode, rhs: LzssCode) -> Ordering {
+    fn comparison(lhs: LzssCode, rhs: LzssCode) -> Ordering {
         match (lhs, rhs) {
-            (
-                LzssCode::Reference {
-                    len: llen,
-                    pos: lpos,
-                },
-                LzssCode::Reference {
-                    len: rlen,
-                    pos: rpos,
-                },
-            ) => ((llen << 3) + rpos).cmp(&((rlen << 3) + lpos)).reverse(),
+            (LzssCode::Reference { len, pos: _ }, LzssCode::Reference { len: rlen, pos: _ }) => {
+                (rlen).cmp(&len)
+            }
             (LzssCode::Symbol(_), LzssCode::Symbol(_)) => Ordering::Equal,
             (_, LzssCode::Symbol(_)) => Ordering::Greater,
             (LzssCode::Symbol(_), _) => Ordering::Less,
         }
     }
 
-    let uncompressed = Vec::with_capacity(u.len());
-    let compressed = uncompressed
-        .into_iter()
+    let encoder = &mut LzssEncoder::with_dict(comparison, 0x400, 18, 3, 0, &[b' '; 0x400]);
+    let compressed = u
+        .iter()
         .cloned()
-        .encode(
-            &mut LzssEncoder::new(comparison, 0x4000, 18, 3, 3),
-            Action::Finish,
-        )
+        .encode( encoder, Action::Finish)
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
 
@@ -166,36 +158,44 @@ fn compress_lzss(u: &[u8]) -> Vec<u8> {
     let mut op_idx = 0;
     let mut op_code = 1u8;
 
-    let mut i = 0;
-    while i < compressed.len() {
+    let mut currpos = 0;
+    compressed.iter().for_each(|code| {
         if op_code == 1 {
             op_idx = comp.len();
             comp.push(0);
         }
 
-        match compressed[i] {
+        currpos += match *code {
             LzssCode::Symbol(b) => {
                 comp[op_idx] |= op_code;
                 comp.push(b);
+                1
             }
             LzssCode::Reference { len, pos } => {
-                comp.push(pos as u8);
-                comp.push((pos >> 4) as u8 & 0x30 | len as u8 - 3);
+                let abspos = currpos - pos - 16 - 1 & 0x3ff;
+
+                comp.push(abspos as u8);
+                comp.push((abspos >> 4) as u8 & 0x30 | len as u8 - 3);
+                len
             }
-        }
-        i += 1;
+        };
         op_code = op_code.rotate_left(1);
-    }
+    });
     comp
 }
 
 fn encrypt(key: [u8; 16], contents: &[u8], game: Game) -> Vec<u8> {
     let mut comp = compress_lzss(contents);
     encrypt_decrypt(key, &mut comp[20..]);
-    let data = &contents[16..contents.len() - 18];
-    let len = data.len() as u32;
+    let len = contents.len() as u32;
     let crc = gen_crc(&key);
-    let header = [Magic::Magic as u32, game as u32, gen_crc(data), crc, len];
+    let header = [
+        Magic::Magic as u32,
+        game as u32,
+        gen_crc(contents),
+        crc,
+        len,
+    ];
     comp.splice(0..20, header.iter().flat_map(|num| num.to_le_bytes()));
     comp
 }
@@ -237,8 +237,6 @@ fn main() -> Result<()> {
                         + path.extension().unwrap().to_str().unwrap(),
                 );
                 let file_name = path.file_name().unwrap().to_str().unwrap();
-                data.splice(0..0, [b' '; 16]);
-                data.extend_from_slice(&[0; 18]);
                 encrypt(make_key(file_name, game), &data, game)
             };
             std::fs::write(&path, &res)
@@ -269,10 +267,8 @@ mod tests {
                     let display = path.display();
                     let file_name = path.file_name().unwrap().to_str().unwrap();
                     let key = make_key(file_name, header.game);
-                    let mut res = decrypt(key, header, data)
+                    let res = decrypt(key, header, data)
                         .context(format!("Error occurred in 1. decryption of {display}"))?;
-                    res.splice(0..0, [0x20; 16]);
-                    res.extend_from_slice(&[0; 18]);
 
                     let mut contents = encrypt(key, &res, header.game);
                     decrypt(key, header, &mut contents[20..])
