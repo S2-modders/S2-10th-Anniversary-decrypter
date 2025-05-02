@@ -45,8 +45,8 @@ fn gen_crc(data: &[u8]) -> u32 {
     !remainder.fold(div, |div, i| (div >> 8) ^ R[0][(i ^ div as u8) as usize])
 }
 
-fn decompress(cmp: &[u8], expected_len: usize) -> Vec<u8> {
-    let mut prep = Vec::with_capacity(expected_len);
+fn decompress(cmp: &[u8]) -> Vec<u8> {
+    let mut prep = Vec::with_capacity(cmp.len());
     let mut mode = 0;
     let mut iter = cmp.iter();
     let mut len1 = 0;
@@ -59,21 +59,15 @@ fn decompress(cmp: &[u8], expected_len: usize) -> Vec<u8> {
             len1 += 1;
         } else if let Some(&next) = iter.next() {
             let num = curr as usize + ((next as usize & 0x30) << 4);
-            let pos = (len1 - num - 16 & 0x3ff) - 1;
+            let pos = ((len1 - num - 16) & 0x3ff) - 1;
             let len = 3 + (next as usize & 0xf);
             prep.push(LzssCode::Reference { len, pos });
             len1 += len;
             mode >>= 1;
         }
     }
-    let decoder = &mut LzssDecoder::with_dict(0x400, &[b' '; 0x400]);
-    let res = prep
-        .iter()
-        .cloned()
-        .decode(decoder)
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap();
-    res
+    let d = &mut LzssDecoder::with_dict(0x400, &[b' '; 0x400]);
+    prep.iter().cloned().decode(d).map(Result::unwrap).collect()
 }
 
 fn encrypt_decrypt(key: [u8; 16], data: &mut [u8]) {
@@ -117,7 +111,7 @@ fn decrypt(key: [u8; 16], header: &Header, contents: &mut [u8]) -> Result<Vec<u8
     }
     encrypt_decrypt(key, contents);
     let expect = header.size.try_into().unwrap();
-    let res = decompress(contents, expect);
+    let res = decompress(contents);
     let len = res.len();
     if len != expect {
         return Err(eyre!("size mismatch: {len} != {expect}"));
@@ -143,24 +137,23 @@ fn compress_lzss(u: &[u8]) -> Vec<u8> {
     }
 
     let encoder = &mut LzssEncoder::with_dict(comparison, 0x400, 18, 3, 0, &[b' '; 0x400]);
-    let compressed = u
+    let cmp = u
         .iter()
         .cloned()
         .encode(encoder, Action::Finish)
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
 
-    let mut comp = Vec::with_capacity(compressed.len() * 2);
+    let mut comp = Vec::with_capacity(cmp.len() * 2);
     let mut op_idx = 0;
     let mut op_code = 1u8;
 
     let mut currpos = 0;
-    compressed.iter().for_each(|code| {
+    cmp.iter().for_each(|code| {
         if op_code == 1 {
             op_idx = comp.len();
             comp.push(0);
         }
-
         currpos += match *code {
             LzssCode::Symbol(b) => {
                 comp[op_idx] |= op_code;
@@ -168,10 +161,10 @@ fn compress_lzss(u: &[u8]) -> Vec<u8> {
                 1
             }
             LzssCode::Reference { len, pos } => {
-                let abspos = currpos - pos - 16 - 1 & 0x3ff;
+                let abspos = (currpos - pos - 16 - 1) & 0x3ff;
 
                 comp.push(abspos as u8);
-                comp.push((abspos >> 4) as u8 & 0x30 | len as u8 - 3);
+                comp.push((abspos >> 4) as u8 & 0x30 | (len as u8 - 3));
                 len
             }
         };
@@ -214,10 +207,8 @@ fn main() -> Result<()> {
                 let file_name = path.file_name().unwrap().to_str().unwrap();
                 let key = make_key(file_name, header.game);
                 path.set_extension(ext.to_owned() + path.extension().unwrap().to_str().unwrap());
-                decrypt(key, header, data).context(format!(
-                    "Error occurred while decrypting {}",
-                    path.display()
-                ))?
+                decrypt(key, header, data)
+                    .context(format!("Error while decrypting {}", path.display()))?
             } else {
                 let file_stem = path.file_stem().unwrap().to_str().unwrap();
                 let game = match &file_stem[file_stem.len() - 4..] {
