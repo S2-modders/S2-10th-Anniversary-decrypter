@@ -116,7 +116,7 @@ fn decrypt(key: [u8; 16], header: &Header, contents: &mut [u8]) -> Result<Vec<u8
     let crc = gen_crc(&key);
     let expect = header.name_crc;
     if crc != expect {
-        return Err(eyre!("name crc mismatch: {crc} != {expect}"));
+        return Err(eyre!("name crc mismatch: {crc:x} != {expect:x}"));
     }
     encrypt_decrypt(key, contents);
     let expect = header.size.try_into().unwrap();
@@ -128,7 +128,7 @@ fn decrypt(key: [u8; 16], header: &Header, contents: &mut [u8]) -> Result<Vec<u8
     let crc = gen_crc(&res);
     let expect = header.file_crc;
     if crc != expect {
-        return Err(eyre!("data crc mismatch: {crc} != {expect}"));
+        return Err(eyre!("data crc mismatch: {crc:x} != {expect:x}"));
     }
     Ok(res)
 }
