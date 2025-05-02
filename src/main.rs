@@ -149,7 +149,7 @@ fn compress_lzss(u: &[u8]) -> Vec<u8> {
     let compressed = u
         .iter()
         .cloned()
-        .encode( encoder, Action::Finish)
+        .encode(encoder, Action::Finish)
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
 
