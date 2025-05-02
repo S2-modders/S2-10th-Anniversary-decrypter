@@ -36,16 +36,13 @@ fn make_random(seed: u32) -> MINSTD0 {
 }
 
 fn gen_crc(data: &[u8]) -> u32 {
-    const R0: [u32; 256] = transmute!(*include_bytes!("../rnum0.bin"));
-    const R1: [u32; 256] = transmute!(*include_bytes!("../rnum1.bin"));
-    const R2: [u32; 256] = transmute!(*include_bytes!("../rnum2.bin"));
-    const R3: [u32; 256] = transmute!(*include_bytes!("../rnum3.bin"));
+    const R: [[u32; 256]; 4] = transmute!(*include_bytes!("rnum.bin"));
     let div = data.chunks_exact(4).fold(u32::MAX, |div, i| {
         let t = (div ^ u32::from_le_bytes(i.try_into().unwrap())).to_le_bytes();
-        R0[t[3] as usize] ^ R1[t[2] as usize] ^ R2[t[1] as usize] ^ R3[t[0] as usize]
+        R[0][t[3] as usize] ^ R[1][t[2] as usize] ^ R[2][t[1] as usize] ^ R[3][t[0] as usize]
     });
     let remainder = data.chunks_exact(4).remainder().iter();
-    !remainder.fold(div, |div, i| (div >> 8) ^ R0[(i ^ div as u8) as usize])
+    !remainder.fold(div, |div, i| (div >> 8) ^ R[0][(i ^ div as u8) as usize])
 }
 
 fn decompress(cmp: &[u8], expected_len: usize) -> Vec<u8> {
@@ -153,8 +150,7 @@ fn compress_lzss(u: &[u8]) -> Vec<u8> {
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
 
-    let mut comp = Vec::with_capacity(u.len());
-    comp.extend_from_slice(&[0; 20]);
+    let mut comp = Vec::with_capacity(compressed.len() * 2);
     let mut op_idx = 0;
     let mut op_code = 1u8;
 
@@ -186,18 +182,15 @@ fn compress_lzss(u: &[u8]) -> Vec<u8> {
 
 fn encrypt(key: [u8; 16], contents: &[u8], game: Game) -> Vec<u8> {
     let mut comp = compress_lzss(contents);
-    encrypt_decrypt(key, &mut comp[20..]);
-    let len = contents.len() as u32;
-    let crc = gen_crc(&key);
-    let header = [
-        Magic::Magic as u32,
-        game as u32,
-        gen_crc(contents),
-        crc,
-        len,
-    ];
-    comp.splice(0..20, header.iter().flat_map(|num| num.to_le_bytes()));
-    comp
+    encrypt_decrypt(key, &mut comp);
+    let header = Header {
+        magic: Magic::Magic,
+        game,
+        file_crc: gen_crc(contents),
+        name_crc: gen_crc(&key),
+        size: contents.len() as u32,
+    };
+    header.as_bytes().iter().copied().chain(comp).collect()
 }
 
 fn main() -> Result<()> {
