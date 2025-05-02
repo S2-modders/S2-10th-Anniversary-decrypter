@@ -1,3 +1,4 @@
+use compression::prelude::{DecodeExt, LzssCode, LzssDecoder};
 use minstd::MINSTD0;
 use rayon::prelude::*;
 use simple_eyre::eyre::{eyre, Context, Result};
@@ -46,24 +47,34 @@ fn gen_crc(data: &[u8]) -> u32 {
 }
 
 fn decompress(cmp: &[u8], expected_len: usize) -> Vec<u8> {
-    let mut dc = Vec::with_capacity(expected_len);
-    dc.extend_from_slice(&[b' '; 16]);
+    let mut prep = Vec::with_capacity(expected_len);
     let mut mode = 0;
     let mut iter = cmp.iter();
+    let mut len1 = 0;
     while let Some(&curr) = iter.next() {
         if mode & 0x100 == 0 {
             mode = curr as u32 | 0xff00;
         } else if mode & 1 != 0 {
-            dc.push(curr);
+            prep.push(LzssCode::Symbol(curr));
             mode >>= 1;
+            len1 += 1;
         } else if let Some(&next) = iter.next() {
             let num = curr as usize + ((next as usize & 0x30) << 4);
-            let c = dc.len() - (dc.len() - num - 32 & 0x3ff);
-            (c..c + 3 + (next as usize & 0xf)).for_each(|i| dc.push(dc[i]));
+            let pos = (len1 - num - 16 & 0x3ff) - 1;
+            let len = 3 + (next as usize & 0xf);
+            prep.push(LzssCode::Reference { len, pos });
+            len1 += len;
             mode >>= 1;
         }
     }
-    dc[16..].to_vec()
+    let decoder = &mut LzssDecoder::with_dict(0x400, &[b' '; 0x400]);
+    let res = prep
+        .iter()
+        .cloned()
+        .decode(decoder)
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    res
 }
 
 fn encrypt_decrypt(key: [u8; 16], data: &mut [u8]) {
@@ -121,39 +132,58 @@ fn decrypt(key: [u8; 16], header: &Header, contents: &mut [u8]) -> Result<Vec<u8
 }
 
 fn compress_lzss(u: &[u8]) -> Vec<u8> {
+    pub fn comparison(lhs: LzssCode, rhs: LzssCode) -> Ordering {
+        match (lhs, rhs) {
+            (
+                LzssCode::Reference {
+                    len: llen,
+                    pos: lpos,
+                },
+                LzssCode::Reference {
+                    len: rlen,
+                    pos: rpos,
+                },
+            ) => ((llen << 3) + rpos).cmp(&((rlen << 3) + lpos)).reverse(),
+            (LzssCode::Symbol(_), LzssCode::Symbol(_)) => Ordering::Equal,
+            (_, LzssCode::Symbol(_)) => Ordering::Greater,
+            (LzssCode::Symbol(_), _) => Ordering::Less,
+        }
+    }
+
+    let uncompressed = Vec::with_capacity(u.len());
+    let compressed = uncompressed
+        .into_iter()
+        .cloned()
+        .encode(
+            &mut LzssEncoder::new(comparison, 0x4000, 18, 3, 3),
+            Action::Finish,
+        )
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+
     let mut comp = Vec::with_capacity(u.len());
     comp.extend_from_slice(&[0; 20]);
     let mut op_idx = 0;
     let mut op_code = 1u8;
 
-    let mut i = 16;
-    while i < u.len() - 18 {
+    let mut i = 0;
+    while i < compressed.len() {
         if op_code == 1 {
             op_idx = comp.len();
             comp.push(0);
         }
 
-        let currcomp = u128::from_be_bytes(u[i + 2..i + 18].try_into().unwrap());
-        let min = i.saturating_sub(1023) as u16;
-        i += u[i.saturating_sub(1023)..i + 17]
-            .windows(18)
-            .enumerate()
-            .filter(|(_, window)| window[..2] == u[i..i + 2])
-            .map(|(j, window)| (u128::from_be_bytes(window[2..18].try_into().unwrap()), j))
-            .map(|(currcomp2, j)| ((currcomp2 ^ currcomp).leading_zeros() as usize, j as u16))
-            .max()
-            .map(|(len, offset)| ((len / 8 + 2).min(u.len() - 18 - i), min + offset + 0x3e0))
-            .filter(|(len, _)| *len >= 3)
-            .map(|(copy_len, copy_offset)| {
-                comp.push(copy_offset as u8);
-                comp.push((copy_offset >> 4) as u8 & 0x30 | copy_len as u8 - 3);
-                copy_len
-            })
-            .unwrap_or_else(|| {
+        match compressed[i] {
+            LzssCode::Symbol(b) => {
                 comp[op_idx] |= op_code;
-                comp.push(u[i]);
-                1
-            });
+                comp.push(b);
+            }
+            LzssCode::Reference { len, pos } => {
+                comp.push(pos as u8);
+                comp.push((pos >> 4) as u8 & 0x30 | len as u8 - 3);
+            }
+        }
+        i += 1;
         op_code = op_code.rotate_left(1);
     }
     comp
