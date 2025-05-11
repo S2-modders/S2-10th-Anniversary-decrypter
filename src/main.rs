@@ -45,23 +45,22 @@ fn gen_crc(data: &[u8]) -> u32 {
     !remainder.fold(div, |div, i| (div >> 8) ^ R[0][(i ^ div as u8) as usize])
 }
 
-fn decompress(cmp: &[u8]) -> Vec<u8> {
-    let mut iter = cmp.iter();
+fn decompress(iter: &mut impl Iterator<Item = u8>) -> Vec<u8> {
     let mut mode = 0u32;
     let mut len1 = 0usize;
 
     let code_iter = std::iter::from_fn(|| {
-        let mut curr = *iter.next()?; 
+        let mut curr = iter.next()?; 
         if mode & 0x100 == 0 {
             mode = curr as u32 | 0xff00;
-            curr = *iter.next()?;
+            curr = iter.next()?;
         }
         if mode & 1 != 0 {
             mode >>= 1;
             len1 += 1;
             return Some(LzssCode::Symbol(curr));
         }
-        let &next = iter.next()?;
+        let next = iter.next()?;
         let num = curr as usize + ((next as usize & 0x30) << 4);
         let len = 3 + (next as usize & 0xf);
         let pos = ((len1 - num - 16) & 0x3ff).wrapping_sub(1);
@@ -114,15 +113,15 @@ fn make_key(file_name: &str, game: Game) -> [u8; 16] {
     }
 }
 
-fn decrypt(key: [u8; 16], header: &Header, contents: &mut [u8]) -> Result<Vec<u8>> {
+fn decrypt(key: [u8; 16], header: &Header, contents: &[u8]) -> Result<Vec<u8>> {
     let crc = gen_crc(&key);
     let expect = header.name_crc;
     if crc != expect {
         return Err(eyre!("name crc mismatch: {crc:x} != {expect:x}"));
     }
-    let dec = encrypt_decrypt(key, contents);
+    let mut dec = encrypt_decrypt(key, contents);
     let expect = header.size.try_into().unwrap();
-    let res = decompress(&dec.collect::<Vec<u8>>());
+    let res = decompress(&mut dec);
     let len = res.len();
     if len != expect {
         return Err(eyre!("size mismatch: {len} != {expect}"));
@@ -266,8 +265,8 @@ mod tests {
                     let res = decrypt(key, header, data)
                         .context(format!("Error occurred in 1. decryption of {display}"))?;
 
-                    let mut contents = encrypt(key, &res, header.game);
-                    decrypt(key, header, &mut contents[20..])
+                    let contents = encrypt(key, &res, header.game);
+                    decrypt(key, header, &contents[20..])
                         .context(format!("Error occurred in 2. decryption of {display}"))?;
                     return Ok(data.len() as isize - contents.len() as isize);
                 }
