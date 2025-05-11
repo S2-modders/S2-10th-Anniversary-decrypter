@@ -45,6 +45,19 @@ fn gen_crc(data: &[u8]) -> u32 {
     !remainder.fold(div, |div, i| (div >> 8) ^ R[0][(i ^ div as u8) as usize])
 }
 
+fn make_key(file_name: &str, game: Game) -> [u8; 16] {
+    let key = match game {
+        Game::Adk => 0xbd8cc2bd30674bf8b49b1bf9f6822ef4u128.to_be_bytes(),
+        Game::Dng => 0xc95946cad9f04f0aa100aab8cbe8db6bu128.to_be_bytes(),
+    };
+    let file_name = file_name.to_ascii_lowercase();
+    let mut rng = make_random(gen_crc(&encoding_rs::WINDOWS_1252.encode(&file_name).0));
+    match &file_name[file_name.len() - 4..] {
+        ".s2m" | ".sav" => key,
+        _ => key.map(|byte| byte ^ rng.next() as u8),
+    }
+}
+
 fn decompress(iter: &mut impl Iterator<Item = u8>) -> Vec<u8> {
     let mut mode = 0u32;
     let mut len1 = 0usize;
@@ -73,7 +86,6 @@ fn decompress(iter: &mut impl Iterator<Item = u8>) -> Vec<u8> {
     code_iter.decode(d).map(Result::unwrap).collect()
 }
 
-
 fn encrypt_decrypt(key: [u8; 16], data: &[u8]) -> impl Iterator<Item = u8> + '_ {
     let mut random = make_random(gen_crc(&key));
 
@@ -100,18 +112,7 @@ fn encrypt_decrypt(key: [u8; 16], data: &[u8]) -> impl Iterator<Item = u8> + '_ 
         })
 }
 
-fn make_key(file_name: &str, game: Game) -> [u8; 16] {
-    let key = match game {
-        Game::Adk => 0xbd8cc2bd30674bf8b49b1bf9f6822ef4u128.to_be_bytes(),
-        Game::Dng => 0xc95946cad9f04f0aa100aab8cbe8db6bu128.to_be_bytes(),
-    };
-    let file_name = file_name.to_ascii_lowercase();
-    let mut rng = make_random(gen_crc(&encoding_rs::WINDOWS_1252.encode(&file_name).0));
-    match &file_name[file_name.len() - 4..] {
-        ".s2m" | ".sav" => key,
-        _ => key.map(|byte| byte ^ rng.next() as u8),
-    }
-}
+
 
 fn decrypt(key: [u8; 16], header: &Header, contents: &[u8]) -> Result<Vec<u8>> {
     let crc = gen_crc(&key);
