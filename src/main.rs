@@ -46,29 +46,34 @@ fn gen_crc(data: &[u8]) -> u32 {
 }
 
 fn decompress(cmp: &[u8]) -> Vec<u8> {
-    let mut prep = Vec::with_capacity(cmp.len());
-    let mut mode = 0;
     let mut iter = cmp.iter();
-    let mut len1 = 0;
-    while let Some(&curr) = iter.next() {
+    let mut mode = 0u32;
+    let mut len1 = 0usize;
+
+    let code_iter = std::iter::from_fn(|| {
+        let mut curr = *iter.next()?; 
         if mode & 0x100 == 0 {
             mode = curr as u32 | 0xff00;
-        } else if mode & 1 != 0 {
-            prep.push(LzssCode::Symbol(curr));
+            curr = *iter.next()?;
+        }
+        if mode & 1 != 0 {
             mode >>= 1;
             len1 += 1;
-        } else if let Some(&next) = iter.next() {
-            let num = curr as usize + ((next as usize & 0x30) << 4);
-            let pos = ((len1 - num - 16) & 0x3ff) - 1;
-            let len = 3 + (next as usize & 0xf);
-            prep.push(LzssCode::Reference { len, pos });
-            len1 += len;
-            mode >>= 1;
+            return Some(LzssCode::Symbol(curr));
         }
-    }
+        let &next = iter.next()?;
+        let num = curr as usize + ((next as usize & 0x30) << 4);
+        let len = 3 + (next as usize & 0xf);
+        let pos = ((len1 - num - 16) & 0x3ff).wrapping_sub(1);
+        len1 += len;
+        mode >>= 1;
+        Some(LzssCode::Reference { len, pos })
+    });
+
     let d = &mut LzssDecoder::with_dict(0x400, &[b' '; 0x400]);
-    prep.iter().cloned().decode(d).map(Result::unwrap).collect()
+    code_iter.decode(d).map(Result::unwrap).collect()
 }
+
 
 fn encrypt_decrypt(key: [u8; 16], data: &[u8]) -> impl Iterator<Item = u8> + '_ {
     let mut random = make_random(gen_crc(&key));
