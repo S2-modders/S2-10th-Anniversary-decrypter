@@ -63,7 +63,7 @@ fn decompress(iter: &mut impl Iterator<Item = u8>) -> Vec<u8> {
     let mut len1 = 0usize;
 
     let code_iter = std::iter::from_fn(|| {
-        let mut curr = iter.next()?; 
+        let mut curr = iter.next()?;
         if mode & 0x100 == 0 {
             mode = curr as u32 | 0xff00;
             curr = iter.next()?;
@@ -111,8 +111,6 @@ fn encrypt_decrypt(key: [u8; 16], data: &[u8]) -> impl Iterator<Item = u8> + '_ 
             }
         })
 }
-
-
 
 fn decrypt(key: [u8; 16], header: &Header, contents: &[u8]) -> Result<Vec<u8>> {
     let crc = gen_crc(&key);
