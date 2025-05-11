@@ -70,24 +70,30 @@ fn decompress(cmp: &[u8]) -> Vec<u8> {
     prep.iter().cloned().decode(d).map(Result::unwrap).collect()
 }
 
-fn encrypt_decrypt(key: [u8; 16], data: &mut [u8]) {
+fn encrypt_decrypt(key: [u8; 16], data: &[u8]) -> impl Iterator<Item = u8> + '_ {
     let mut random = make_random(gen_crc(&key));
 
     let flavor1: Vec<u8> = (0..(random.next() & 0x7F) + 0x80)
         .map(|_| random.next() as u8)
         .collect();
-    data.iter_mut()
-        .zip(flavor1.iter().cycle())
-        .for_each(|(byte1, byte2)| *byte1 ^= byte2);
 
     let flavor2: Vec<u8> = (0..(random.next() & 0xF) + 0x11)
         .map(|_| random.next() as u8)
         .collect();
-    for i in (random.next() as usize % data.len()..data.len())
-        .step_by((random.next() as usize & 0x1FFF) + 0x2000)
-    {
-        data[i] ^= flavor2[(key[i % key.len()] as usize ^ i) % flavor2.len()];
-    }
+
+    let start = random.next() as usize % data.len();
+    let step = (random.next() as usize & 0x1FFF) + 0x2000;
+    data.iter()
+        .zip(flavor1.into_iter().cycle())
+        .map(|(byte1, byte2)| byte1 ^ byte2)
+        .enumerate()
+        .map(move |(i, val)| {
+            if i >= start && (i - start) % step == 0 {
+                val ^ flavor2[(key[i % key.len()] as usize ^ i) % flavor2.len()]
+            } else {
+                val
+            }
+        })
 }
 
 fn make_key(file_name: &str, game: Game) -> [u8; 16] {
@@ -109,9 +115,9 @@ fn decrypt(key: [u8; 16], header: &Header, contents: &mut [u8]) -> Result<Vec<u8
     if crc != expect {
         return Err(eyre!("name crc mismatch: {crc:x} != {expect:x}"));
     }
-    encrypt_decrypt(key, contents);
+    let dec = encrypt_decrypt(key, contents);
     let expect = header.size.try_into().unwrap();
-    let res = decompress(contents);
+    let res = decompress(&dec.collect::<Vec<u8>>());
     let len = res.len();
     if len != expect {
         return Err(eyre!("size mismatch: {len} != {expect}"));
@@ -174,16 +180,17 @@ fn compress_lzss(u: &[u8]) -> Vec<u8> {
 }
 
 fn encrypt(key: [u8; 16], contents: &[u8], game: Game) -> Vec<u8> {
-    let mut comp = compress_lzss(contents);
-    encrypt_decrypt(key, &mut comp);
+    let comp = compress_lzss(contents);
+    let enc = encrypt_decrypt(key, &comp);
+    let data = enc.collect::<Vec<u8>>();
     let header = Header {
         magic: Magic::Magic,
         game,
-        file_crc: gen_crc(contents),
+        file_crc: gen_crc(&data),
         name_crc: gen_crc(&key),
         size: contents.len() as u32,
     };
-    header.as_bytes().iter().copied().chain(comp).collect()
+    header.as_bytes().iter().copied().chain(data).collect()
 }
 
 fn main() -> Result<()> {
