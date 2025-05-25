@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 compression = "0.1.5"
 encoding_rs = "0.8.35"
+flate2 = "1.1.1"
 minstd = "0.9.4"
 rayon = "1.10.0"
 simple-eyre = "0.3.1"

@@ -1,6 +1,7 @@
 use std::cmp::Ordering;
 
 use compression::prelude::{Action, DecodeExt, EncodeExt, LzssCode, LzssDecoder, LzssEncoder};
+use flate2::Crc;
 use minstd::MINSTD0;
 use rayon::prelude::*;
 use simple_eyre::eyre::{eyre, Context, Result};
@@ -35,14 +36,11 @@ fn make_random(seed: u32) -> MINSTD0 {
     MINSTD0::seed(seed as i32)
 }
 
+
 fn gen_crc(data: &[u8]) -> u32 {
-    const R: [[u32; 256]; 4] = transmute!(*include_bytes!("rnum.bin"));
-    let div = data.chunks_exact(4).fold(u32::MAX, |div, i| {
-        let t = (div ^ u32::from_le_bytes(i.try_into().unwrap())).to_le_bytes();
-        R[0][t[3] as usize] ^ R[1][t[2] as usize] ^ R[2][t[1] as usize] ^ R[3][t[0] as usize]
-    });
-    let remainder = data.chunks_exact(4).remainder().iter();
-    !remainder.fold(div, |div, i| (div >> 8) ^ R[0][(i ^ div as u8) as usize])
+    let mut crc = Crc::new();
+    crc.update(data);
+    crc.sum()
 }
 
 fn make_key(file_name: &str, game: Game) -> [u8; 16] {
