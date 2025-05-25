@@ -1,11 +1,10 @@
 use std::cmp::Ordering;
 
 use compression::prelude::{Action, DecodeExt, EncodeExt, LzssCode, LzssDecoder, LzssEncoder};
-use flate2::Crc;
-use minstd::MINSTD0;
+use crc32fast::hash;
 use rayon::prelude::*;
 use simple_eyre::eyre::{eyre, Context, Result};
-use zerocopy::{transmute, Immutable, IntoBytes, KnownLayout, TryFromBytes};
+use zerocopy::{Immutable, IntoBytes, KnownLayout, TryFromBytes};
 
 #[derive(TryFromBytes, Immutable, IntoBytes)]
 #[repr(u32)]
@@ -27,20 +26,13 @@ struct Header {
     size: u32,
 }
 
-fn make_random(seed: u32) -> MINSTD0 {
+fn make_random(seed: u32) -> minstd::MINSTD0 {
     let mut seed = seed & 0x7fffffff;
     seed = (5..13 - seed.count_ones() as i32)
         .fold(seed, |seed, i| seed | 1 << (17 + i - 2 * i * (i & 1)));
     seed = (5..seed.count_ones() as i32 - 19)
         .fold(seed, |seed, i| seed & !(1 << (17 + i - 2 * i * (i & 1))));
-    MINSTD0::seed(seed as i32)
-}
-
-
-fn gen_crc(data: &[u8]) -> u32 {
-    let mut crc = Crc::new();
-    crc.update(data);
-    crc.sum()
+    minstd::MINSTD0::seed(seed as i32)
 }
 
 fn make_key(file_name: &str, game: Game) -> [u8; 16] {
@@ -49,7 +41,7 @@ fn make_key(file_name: &str, game: Game) -> [u8; 16] {
         Game::Dng => 0xc95946cad9f04f0aa100aab8cbe8db6bu128.to_be_bytes(),
     };
     let file_name = file_name.to_ascii_lowercase();
-    let mut rng = make_random(gen_crc(&encoding_rs::WINDOWS_1252.encode(&file_name).0));
+    let mut rng = make_random(hash(&encoding_rs::WINDOWS_1252.encode(&file_name).0));
     match &file_name[file_name.len() - 4..] {
         ".s2m" | ".sav" => key,
         _ => key.map(|byte| byte ^ rng.next() as u8),
@@ -85,7 +77,7 @@ fn decompress(iter: &mut impl Iterator<Item = u8>) -> Vec<u8> {
 }
 
 fn encrypt_decrypt(key: [u8; 16], data: &[u8]) -> impl Iterator<Item = u8> + '_ {
-    let mut random = make_random(gen_crc(&key));
+    let mut random = make_random(hash(&key));
 
     let flavor1: Vec<u8> = (0..(random.next() & 0x7F) + 0x80)
         .map(|_| random.next() as u8)
@@ -111,7 +103,7 @@ fn encrypt_decrypt(key: [u8; 16], data: &[u8]) -> impl Iterator<Item = u8> + '_ 
 }
 
 fn decrypt(key: [u8; 16], header: &Header, contents: &[u8]) -> Result<Vec<u8>> {
-    let crc = gen_crc(&key);
+    let crc = hash(&key);
     let expect = header.name_crc;
     if crc != expect {
         return Err(eyre!("name crc mismatch: {crc:x} != {expect:x}"));
@@ -123,7 +115,7 @@ fn decrypt(key: [u8; 16], header: &Header, contents: &[u8]) -> Result<Vec<u8>> {
     if len != expect {
         return Err(eyre!("size mismatch: {len} != {expect}"));
     }
-    let crc = gen_crc(&res);
+    let crc = hash(&res);
     let expect = header.file_crc;
     if crc != expect {
         return Err(eyre!("data crc mismatch: {crc:x} != {expect:x}"));
@@ -187,8 +179,8 @@ fn encrypt(key: [u8; 16], contents: &[u8], game: Game) -> Vec<u8> {
     let header = Header {
         magic: Magic::Magic,
         game,
-        file_crc: gen_crc(&data),
-        name_crc: gen_crc(&key),
+        file_crc: hash(&data),
+        name_crc: hash(&key),
         size: contents.len() as u32,
     };
     header.as_bytes().iter().copied().chain(data).collect()
