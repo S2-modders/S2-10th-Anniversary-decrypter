@@ -50,26 +50,27 @@ fn make_key(file_name: &str, game: Game) -> [u8; 16] {
 
 fn decompress(iter: &mut impl Iterator<Item = u8>) -> Vec<u8> {
     let mut mode = 0u32;
-    let mut len1 = 0usize;
+    let mut totallen = 0;
 
     let code_iter = std::iter::from_fn(|| {
-        let mut curr = iter.next()?;
         if mode & 0x100 == 0 {
-            mode = curr as u32 | 0xff00;
-            curr = iter.next()?;
+            mode = iter.next()? as u32 | 0xff00;
         }
         if mode & 1 != 0 {
             mode >>= 1;
-            len1 += 1;
-            return Some(LzssCode::Symbol(curr));
+            totallen += 1;
+            return Some(LzssCode::Symbol(iter.next()?));
         }
-        let next = iter.next()?;
-        let num = curr as usize + ((next as usize & 0x30) << 4);
-        let len = 3 + (next as usize & 0xf);
-        let pos = ((len1 - num - 16) & 0x3ff).wrapping_sub(1);
-        len1 += len;
+        let curr = iter.next()? as usize;
+        let next = iter.next()? as usize;
+        let bufferpos = curr | ((next & 0x30) << 4);
+        let pos = ((totallen - bufferpos - 16) & 0x3ff).wrapping_sub(1);
         mode >>= 1;
-        Some(LzssCode::Reference { len, pos })
+        totallen += 3 + (next & 0xf);
+        Some(LzssCode::Reference {
+            len: 3 + (next & 0xf),
+            pos,
+        })
     });
 
     let d = &mut LzssDecoder::with_dict(0x400, &[b' '; 0x400]);
@@ -123,7 +124,7 @@ fn decrypt(key: [u8; 16], header: &Header, contents: &[u8]) -> Result<Vec<u8>> {
     Ok(res)
 }
 
-fn compress_lzss(u: &[u8]) -> Vec<u8> {
+fn compress_lzss(u: &mut impl Iterator<Item = u8>) -> Vec<u8> {
     fn comparison(lhs: LzssCode, rhs: LzssCode) -> Ordering {
         match (lhs, rhs) {
             (LzssCode::Reference { len, pos: _ }, LzssCode::Reference { len: rlen, pos: _ }) => {
@@ -136,24 +137,19 @@ fn compress_lzss(u: &[u8]) -> Vec<u8> {
     }
 
     let encoder = &mut LzssEncoder::with_dict(comparison, 0x400, 18, 3, 0, &[b' '; 0x400]);
-    let cmp = u
-        .iter()
-        .cloned()
-        .encode(encoder, Action::Finish)
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap();
+    let cmp = u.encode(encoder, Action::Finish).map(Result::unwrap);
 
-    let mut comp = Vec::with_capacity(cmp.len() * 2);
+    let mut comp = Vec::with_capacity(cmp.size_hint().0 * 2);
     let mut op_idx = 0;
     let mut op_code = 1u8;
 
     let mut currpos = 0;
-    cmp.iter().for_each(|code| {
+    cmp.for_each(|code| {
         if op_code == 1 {
             op_idx = comp.len();
             comp.push(0);
         }
-        currpos += match *code {
+        currpos += match code {
             LzssCode::Symbol(b) => {
                 comp[op_idx] |= op_code;
                 comp.push(b);
@@ -172,10 +168,9 @@ fn compress_lzss(u: &[u8]) -> Vec<u8> {
     comp
 }
 
-fn encrypt(key: [u8; 16], contents: &[u8], game: Game) -> Vec<u8> {
+fn encrypt(key: [u8; 16], contents: &mut impl ExactSizeIterator<Item = u8>, game: Game) -> Vec<u8> {
     let comp = compress_lzss(contents);
-    let enc = encrypt_decrypt(key, &comp);
-    let data = enc.collect::<Vec<u8>>();
+    let data = encrypt_decrypt(key, &comp).collect::<Vec<u8>>();
     let header = Header {
         magic: Magic::Magic,
         game,
@@ -221,7 +216,7 @@ fn main() -> Result<()> {
                         + path.extension().unwrap().to_str().unwrap(),
                 );
                 let file_name = path.file_name().unwrap().to_str().unwrap();
-                encrypt(make_key(file_name, game), &data, game)
+                encrypt(make_key(file_name, game), &mut data.into_iter(), game)
             };
             std::fs::write(&path, &res)
                 .context(format!("could not write to {}", path.display()))?;
@@ -254,7 +249,7 @@ mod tests {
                     let res = decrypt(key, header, data)
                         .context(format!("Error occurred in 1. decryption of {display}"))?;
 
-                    let contents = encrypt(key, &res, header.game);
+                    let contents = encrypt(key, &mut res.into_iter(), header.game);
                     decrypt(key, header, &contents[20..])
                         .context(format!("Error occurred in 2. decryption of {display}"))?;
                     return Ok(data.len() as isize - contents.len() as isize);
