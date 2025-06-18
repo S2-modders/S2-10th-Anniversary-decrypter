@@ -1,25 +1,26 @@
-use std::cmp::Ordering;
+use std::{
+    cmp::Ordering,
+    fs::File,
+    io::{Cursor, Read},
+};
 
+use binrw::{binrw, io::BufReader, BinRead, BinWrite};
 use compression::prelude::{Action, DecodeExt, EncodeExt, LzssCode, LzssDecoder, LzssEncoder};
 use crc32fast::hash;
 use rayon::prelude::*;
 use simple_eyre::eyre::{eyre, Context, Result};
-use zerocopy::{Immutable, IntoBytes, KnownLayout, TryFromBytes};
 
-#[derive(TryFromBytes, Immutable, IntoBytes)]
-#[repr(u32)]
-enum Magic {
-    Magic = 0x06091812,
-}
-#[derive(Copy, Clone, TryFromBytes, Immutable, IntoBytes)]
+#[derive(Copy, Clone)]
+#[binrw]
+#[brw(repr = u32)]
 #[repr(u32)]
 enum Game {
     Dng = u32::from_le_bytes(*b"rc00"),
     Adk = u32::from_le_bytes(*b"sadk"),
 }
-#[derive(KnownLayout, TryFromBytes, Immutable, IntoBytes)]
+#[binrw]
+#[brw(little, magic = 0x06091812u32)]
 struct Header {
-    magic: Magic,
     game: Game,
     file_crc: u32,
     name_crc: u32,
@@ -64,13 +65,11 @@ fn decompress(iter: &mut impl Iterator<Item = u8>) -> Vec<u8> {
         let curr = iter.next()? as usize;
         let next = iter.next()? as usize;
         let bufferpos = curr | ((next & 0x30) << 4);
+        let len = 3 + (next & 0xf);
         let pos = ((totallen - bufferpos - 16) & 0x3ff).wrapping_sub(1);
         mode >>= 1;
-        totallen += 3 + (next & 0xf);
-        Some(LzssCode::Reference {
-            len: 3 + (next & 0xf),
-            pos,
-        })
+        totallen += len;
+        Some(LzssCode::Reference { len, pos })
     });
 
     let d = &mut LzssDecoder::with_dict(0x400, &[b' '; 0x400]);
@@ -168,17 +167,24 @@ fn compress_lzss(u: &mut impl Iterator<Item = u8>) -> Vec<u8> {
     comp
 }
 
-fn encrypt(key: [u8; 16], contents: &mut impl ExactSizeIterator<Item = u8>, game: Game) -> Vec<u8> {
-    let comp = compress_lzss(contents);
-    let data = encrypt_decrypt(key, &comp).collect::<Vec<u8>>();
+fn encrypt<W: std::io::Write + std::io::Seek>(
+    key: [u8; 16],
+    contents: Vec<u8>,
+    game: Game,
+    writer: &mut W,
+) -> Result<()> {
+    let file_crc = hash(&contents);
+    let size = contents.len().try_into().unwrap();
+    let comp = compress_lzss(&mut contents.into_iter());
     let header = Header {
-        magic: Magic::Magic,
         game,
-        file_crc: hash(&data),
+        file_crc,
         name_crc: hash(&key),
-        size: contents.len() as u32,
+        size,
     };
-    header.as_bytes().iter().copied().chain(data).collect()
+    header.write_le(writer)?;
+    writer.write_all(&encrypt_decrypt(key, &comp).collect::<Vec<u8>>())?;
+    Ok(())
 }
 
 fn main() -> Result<()> {
@@ -191,10 +197,12 @@ fn main() -> Result<()> {
         .par_bridge()
         .filter_map(Result::ok)
         .filter(|entry| entry.file_type().is_file())
-        .map(|entry| entry.path().to_path_buf())
-        .map(|file| (file.clone(), std::fs::read(file).unwrap()))
-        .map(|(mut path, mut data)| -> Result<()> {
-            let res = if let Ok((header, data)) = Header::try_mut_from_prefix(&mut data) {
+        .map(|entry| -> Result<()> {
+            let mut path = entry.path().to_owned();
+            let mut reader = BufReader::new(File::open(entry.path()).unwrap());
+            if let Ok(header) = Header::read(&mut reader) {
+                let mut data: Vec<u8> = Vec::new();
+                reader.read_to_end(&mut data).unwrap();
                 let ext = match header.game {
                     Game::Adk => "adk.",
                     Game::Dng => "dng.",
@@ -202,9 +210,11 @@ fn main() -> Result<()> {
                 let file_name = path.file_name().unwrap().to_str().unwrap();
                 let key = make_key(file_name, header.game);
                 path.set_extension(ext.to_owned() + path.extension().unwrap().to_str().unwrap());
-                decrypt(key, header, data)
-                    .context(format!("Error while decrypting {}", path.display()))?
+                decrypt(key, &header, &data)
+                    .context(format!("Error while decrypting {}", path.display()))?;
             } else {
+                let mut data: Vec<u8> = Vec::new();
+                reader.read_to_end(&mut data).unwrap();
                 let file_stem = path.file_stem().unwrap().to_str().unwrap();
                 let game = match &file_stem[file_stem.len() - 4..] {
                     ".adk" => Game::Adk,
@@ -216,48 +226,49 @@ fn main() -> Result<()> {
                         + path.extension().unwrap().to_str().unwrap(),
                 );
                 let file_name = path.file_name().unwrap().to_str().unwrap();
-                encrypt(make_key(file_name, game), &mut data.into_iter(), game)
+                let mut file = File::create(&path).context("could not create file {display}")?;
+                encrypt(make_key(file_name, game), data, game, &mut file)
+                    .context(format!("could not write to {}", path.display()))?;
             };
-            std::fs::write(&path, &res)
-                .context(format!("could not write to {}", path.display()))?;
             Ok(())
         })
         .find_any(Result::is_err)
         .map_or(Ok(()), |report| report)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn is_valid() {
-        let saved = std::env::args()
-            .collect::<Vec<String>>()
-            .into_iter()
-            .skip(1)
-            .flat_map(walkdir::WalkDir::new)
-            .par_bridge()
-            .filter_map(Result::ok)
-            .filter(|entry| entry.file_type().is_file())
-            .map(|entry| entry.path().to_path_buf())
-            .map(|file| (file.clone(), std::fs::read(file).unwrap()))
-            .map(|(path, mut data)| -> Result<isize> {
-                if let Ok((header, data)) = Header::try_mut_from_prefix(&mut data) {
-                    let display = path.display();
-                    let file_name = path.file_name().unwrap().to_str().unwrap();
-                    let key = make_key(file_name, header.game);
-                    let res = decrypt(key, header, data)
-                        .context(format!("Error occurred in 1. decryption of {display}"))?;
+#[test]
+fn is_valid() {
+    let saved = std::env::args()
+        .collect::<Vec<String>>()
+        .into_iter()
+        .skip(1)
+        .flat_map(walkdir::WalkDir::new)
+        .par_bridge()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_file())
+        .map(|entry| -> Result<isize> {
+            let mut reader = BufReader::new(File::open(entry.path()).unwrap());
+            if let Ok(header) = Header::read(&mut reader) {
+                let mut data = Vec::new();
+                reader.read_to_end(&mut data).unwrap();
+                let display = entry.path().display();
+                let file_name = entry.path().file_name().unwrap().to_str().unwrap();
+                let key = make_key(file_name, header.game);
+                let res = decrypt(key, &header, &data)
+                    .context(format!("Error occurred in 1. decryption of {display}"))?;
+                let mut cursor = Cursor::new(Vec::new());
 
-                    let contents = encrypt(key, &mut res.into_iter(), header.game);
-                    decrypt(key, header, &contents[20..])
-                        .context(format!("Error occurred in 2. decryption of {display}"))?;
-                    return Ok(data.len() as isize - contents.len() as isize);
-                }
-                Ok(0)
-            })
-            .map(Result::unwrap)
-            .sum::<isize>();
-        println!("saved {saved} bytes!");
-    }
+                encrypt(key, res, header.game, &mut cursor).unwrap();
+                let contents = cursor.into_inner();
+                decrypt(key, &header, &contents[20..])
+                    .context(format!("Error occurred in 2. decryption of {display}"))?;
+                return Ok(
+                    entry.path().metadata().unwrap().len() as isize - contents.len() as isize
+                );
+            }
+            Ok(0)
+        })
+        .map(Result::unwrap)
+        .sum::<isize>();
+    println!("saved {saved} bytes!");
 }
