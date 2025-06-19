@@ -1,14 +1,9 @@
-use std::{
-    cmp::Ordering,
-    fs::File,
-    io::{Cursor, Read},
-};
-
-use binrw::{binrw, io::BufReader, BinRead, BinWrite};
+use binrw::{binrw, helpers::until_eof, io::BufReader, BinRead, BinWrite};
 use compression::prelude::{Action, DecodeExt, EncodeExt, LzssCode, LzssDecoder, LzssEncoder};
 use crc32fast::hash;
 use rayon::prelude::*;
-use simple_eyre::eyre::{eyre, Context, Result};
+use simple_eyre::eyre::{Context, Result};
+use std::{cmp::Ordering, fs::File, io::Read};
 
 #[derive(Copy, Clone)]
 #[binrw]
@@ -20,11 +15,13 @@ enum Game {
 }
 #[binrw]
 #[brw(little, magic = 0x06091812u32)]
-struct Header {
+struct CompressedFile {
     game: Game,
     file_crc: u32,
     name_crc: u32,
     size: u32,
+    #[br(parse_with = until_eof)]
+    data: Vec<u8>,
 }
 
 fn make_random(seed: u32) -> minstd::MINSTD0 {
@@ -102,25 +99,12 @@ fn encrypt_decrypt(key: [u8; 16], data: &[u8]) -> impl Iterator<Item = u8> + '_ 
         })
 }
 
-fn decrypt(key: [u8; 16], header: &Header, contents: &[u8]) -> Result<Vec<u8>> {
-    let crc = hash(&key);
-    let expect = header.name_crc;
-    if crc != expect {
-        return Err(eyre!("name crc mismatch: {crc:x} != {expect:x}"));
-    }
-    let mut dec = encrypt_decrypt(key, contents);
-    let expect = header.size.try_into().unwrap();
-    let res = decompress(&mut dec);
-    let len = res.len();
-    if len != expect {
-        return Err(eyre!("size mismatch: {len} != {expect}"));
-    }
-    let crc = hash(&res);
-    let expect = header.file_crc;
-    if crc != expect {
-        return Err(eyre!("data crc mismatch: {crc:x} != {expect:x}"));
-    }
-    Ok(res)
+fn decrypt(key: [u8; 16], file: CompressedFile) -> Result<Vec<u8>> {
+    assert_eq!(hash(&key), file.name_crc);
+    let decompressed = decompress(&mut encrypt_decrypt(key, &file.data));
+    assert_eq!(decompressed.len(), file.size as usize);
+    assert_eq!(hash(&decompressed), file.file_crc);
+    Ok(decompressed)
 }
 
 fn compress_lzss(u: &mut impl Iterator<Item = u8>) -> Vec<u8> {
@@ -167,24 +151,14 @@ fn compress_lzss(u: &mut impl Iterator<Item = u8>) -> Vec<u8> {
     comp
 }
 
-fn encrypt<W: std::io::Write + std::io::Seek>(
-    key: [u8; 16],
-    contents: Vec<u8>,
-    game: Game,
-    writer: &mut W,
-) -> Result<()> {
-    let file_crc = hash(&contents);
-    let size = contents.len().try_into().unwrap();
-    let comp = compress_lzss(&mut contents.into_iter());
-    let header = Header {
+fn encrypt(key: [u8; 16], contents: Vec<u8>, game: Game) -> CompressedFile {
+    CompressedFile {
         game,
-        file_crc,
+        file_crc: hash(&contents),
         name_crc: hash(&key),
-        size,
-    };
-    header.write_le(writer)?;
-    writer.write_all(&encrypt_decrypt(key, &comp).collect::<Vec<u8>>())?;
-    Ok(())
+        size: contents.len().try_into().unwrap(),
+        data: encrypt_decrypt(key, &compress_lzss(&mut contents.into_iter())).collect(),
+    }
 }
 
 fn main() -> Result<()> {
@@ -200,9 +174,7 @@ fn main() -> Result<()> {
         .map(|entry| -> Result<()> {
             let mut path = entry.path().to_owned();
             let mut reader = BufReader::new(File::open(entry.path()).unwrap());
-            if let Ok(header) = Header::read(&mut reader) {
-                let mut data: Vec<u8> = Vec::new();
-                reader.read_to_end(&mut data).unwrap();
+            if let Ok(header) = CompressedFile::read(&mut reader) {
                 let ext = match header.game {
                     Game::Adk => "adk.",
                     Game::Dng => "dng.",
@@ -210,7 +182,7 @@ fn main() -> Result<()> {
                 let file_name = path.file_name().unwrap().to_str().unwrap();
                 let key = make_key(file_name, header.game);
                 path.set_extension(ext.to_owned() + path.extension().unwrap().to_str().unwrap());
-                decrypt(key, &header, &data)
+                decrypt(key, header)
                     .context(format!("Error while decrypting {}", path.display()))?;
             } else {
                 let mut data: Vec<u8> = Vec::new();
@@ -227,7 +199,8 @@ fn main() -> Result<()> {
                 );
                 let file_name = path.file_name().unwrap().to_str().unwrap();
                 let mut file = File::create(&path).context("could not create file {display}")?;
-                encrypt(make_key(file_name, game), data, game, &mut file)
+                encrypt(make_key(file_name, game), data, game)
+                    .write(&mut file)
                     .context(format!("could not write to {}", path.display()))?;
             };
             Ok(())
@@ -248,23 +221,20 @@ fn is_valid() {
         .filter(|entry| entry.file_type().is_file())
         .map(|entry| -> Result<isize> {
             let mut reader = BufReader::new(File::open(entry.path()).unwrap());
-            if let Ok(header) = Header::read(&mut reader) {
-                let mut data = Vec::new();
-                reader.read_to_end(&mut data).unwrap();
+            if let Ok(header) = CompressedFile::read(&mut reader) {
+                let datalen = header.data.len();
+                let game = header.game;
                 let display = entry.path().display();
                 let file_name = entry.path().file_name().unwrap().to_str().unwrap();
-                let key = make_key(file_name, header.game);
-                let res = decrypt(key, &header, &data)
+                let key = make_key(file_name, game);
+                let res = decrypt(key, header)
                     .context(format!("Error occurred in 1. decryption of {display}"))?;
-                let mut cursor = Cursor::new(Vec::new());
 
-                encrypt(key, res, header.game, &mut cursor).unwrap();
-                let contents = cursor.into_inner();
-                decrypt(key, &header, &contents[20..])
+                let file = encrypt(key, res, game);
+                let newdatalen = file.data.len();
+                decrypt(key, file)
                     .context(format!("Error occurred in 2. decryption of {display}"))?;
-                return Ok(
-                    entry.path().metadata().unwrap().len() as isize - contents.len() as isize
-                );
+                return Ok(datalen as isize - newdatalen as isize);
             }
             Ok(0)
         })
