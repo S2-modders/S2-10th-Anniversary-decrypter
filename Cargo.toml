@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+argh = "0.1.13"
 binrw = "0.15.0"
 compression = "0.1.5"
 crc32fast = "1.4.2"

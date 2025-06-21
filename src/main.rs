@@ -19,6 +19,8 @@ struct CompressedFile {
     game: Game,
     #[bw(calc = hash(data))]
     file_crc: u32,
+    // #[bw(ignore, calc = make_key(val1, &game))]
+    // key: [u8; 16],
     #[br(assert(hash(&make_key(val1, &game)) == name_crc))]
     #[bw(calc = hash(&make_key(val1, &game)))]
     name_crc: u32,
@@ -155,17 +157,24 @@ fn compress_lzss(u: &[u8]) -> Vec<u8> {
     comp
 }
 
+#[derive(argh::FromArgs)]
+/// decrypts and encrypts files in specified directories
+struct Settler2Decrypter {
+    /// directories or files to decrypting/encrpt
+    #[argh(positional)]
+    files: Vec<std::path::PathBuf>,
+}
+
 fn main() -> Result<()> {
     simple_eyre::install()?;
-    std::env::args()
-        .collect::<Vec<String>>()
+    argh::from_env::<Settler2Decrypter>()
+        .files
         .into_iter()
-        .skip(1)
         .flat_map(walkdir::WalkDir::new)
         .par_bridge()
         .filter_map(Result::ok)
         .filter(|entry| entry.file_type().is_file())
-        .map(|entry| -> Result<()> {
+        .try_for_each(|entry| -> Result<()> {
             let mut path = entry.path().to_owned();
             let mut reader = BufReader::new(File::open(entry.path()).unwrap());
             let file_name = path.file_name().unwrap().to_str().unwrap();
@@ -204,8 +213,6 @@ fn main() -> Result<()> {
             };
             std::fs::write(&path, data).context(format!("could not write to {}", path.display()))
         })
-        .find_any(Result::is_err)
-        .map_or(Ok(()), |report| report)
 }
 
 #[test]
