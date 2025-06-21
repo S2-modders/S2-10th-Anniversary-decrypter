@@ -1,11 +1,10 @@
-use binrw::{binrw, helpers::until_eof, io::BufReader, BinRead, BinWrite};
+use binrw::{binrw, error::ContextExt, helpers::until_eof, io::BufReader, BinRead, BinWrite};
 use compression::prelude::{Action, DecodeExt, EncodeExt, LzssCode, LzssDecoder, LzssEncoder};
 use crc32fast::hash;
 use rayon::prelude::*;
 use simple_eyre::eyre::{Context, Result};
 use std::{cmp::Ordering, fs::File, io::Read};
 
-#[derive(Copy, Clone)]
 #[binrw]
 #[brw(repr = u32)]
 #[repr(u32)]
@@ -15,12 +14,21 @@ enum Game {
 }
 #[binrw]
 #[brw(little, magic = 0x06091812u32)]
+#[brw(import(val1:&str) )]
 struct CompressedFile {
     game: Game,
+    #[bw(calc = hash(data))]
     file_crc: u32,
+    #[br(assert(hash(&make_key(val1, &game)) == name_crc))]
+    #[bw(calc = hash(&make_key(val1, &game)))]
     name_crc: u32,
+    #[bw(calc = data.len().try_into().unwrap())]
     size: u32,
     #[br(parse_with = until_eof)]
+    #[br(map = |x:Vec<u8>| decompress(&mut encrypt_decrypt(make_key(val1, &game), &x)))]
+    #[br(assert(size as usize == data.len()))]
+    #[br(assert(file_crc == hash(&data)))]
+    #[bw(map = |x:&Vec<u8>| encrypt_decrypt(make_key(val1, &game), &compress_lzss(x)).collect::<Vec<u8>>())]
     data: Vec<u8>,
 }
 
@@ -33,7 +41,7 @@ fn make_random(seed: u32) -> minstd::MINSTD0 {
     minstd::MINSTD0::seed(seed as i32)
 }
 
-fn make_key(file_name: &str, game: Game) -> [u8; 16] {
+fn make_key(file_name: &str, game: &Game) -> [u8; 16] {
     let key = match game {
         Game::Adk => 0xbd8cc2bd30674bf8b49b1bf9f6822ef4u128.to_be_bytes(),
         Game::Dng => 0xc95946cad9f04f0aa100aab8cbe8db6bu128.to_be_bytes(),
@@ -99,15 +107,7 @@ fn encrypt_decrypt(key: [u8; 16], data: &[u8]) -> impl Iterator<Item = u8> + '_ 
         })
 }
 
-fn decrypt(key: [u8; 16], file: CompressedFile) -> Result<Vec<u8>> {
-    assert_eq!(hash(&key), file.name_crc);
-    let decompressed = decompress(&mut encrypt_decrypt(key, &file.data));
-    assert_eq!(decompressed.len(), file.size as usize);
-    assert_eq!(hash(&decompressed), file.file_crc);
-    Ok(decompressed)
-}
-
-fn compress_lzss(u: &mut impl Iterator<Item = u8>) -> Vec<u8> {
+fn compress_lzss(u: &[u8]) -> Vec<u8> {
     fn comparison(lhs: LzssCode, rhs: LzssCode) -> Ordering {
         match (lhs, rhs) {
             (LzssCode::Reference { len, pos: _ }, LzssCode::Reference { len: rlen, pos: _ }) => {
@@ -120,7 +120,11 @@ fn compress_lzss(u: &mut impl Iterator<Item = u8>) -> Vec<u8> {
     }
 
     let encoder = &mut LzssEncoder::with_dict(comparison, 0x400, 18, 3, 0, &[b' '; 0x400]);
-    let cmp = u.encode(encoder, Action::Finish).map(Result::unwrap);
+    let cmp = u
+        .iter()
+        .cloned()
+        .encode(encoder, Action::Finish)
+        .map(Result::unwrap);
 
     let mut comp = Vec::with_capacity(cmp.size_hint().0 * 2);
     let mut op_idx = 0;
@@ -151,16 +155,6 @@ fn compress_lzss(u: &mut impl Iterator<Item = u8>) -> Vec<u8> {
     comp
 }
 
-fn encrypt(key: [u8; 16], contents: Vec<u8>, game: Game) -> CompressedFile {
-    CompressedFile {
-        game,
-        file_crc: hash(&contents),
-        name_crc: hash(&key),
-        size: contents.len().try_into().unwrap(),
-        data: encrypt_decrypt(key, &compress_lzss(&mut contents.into_iter())).collect(),
-    }
-}
-
 fn main() -> Result<()> {
     simple_eyre::install()?;
     std::env::args()
@@ -174,36 +168,41 @@ fn main() -> Result<()> {
         .map(|entry| -> Result<()> {
             let mut path = entry.path().to_owned();
             let mut reader = BufReader::new(File::open(entry.path()).unwrap());
-            if let Ok(header) = CompressedFile::read(&mut reader) {
-                let ext = match header.game {
-                    Game::Adk => "adk.",
-                    Game::Dng => "dng.",
-                };
-                let file_name = path.file_name().unwrap().to_str().unwrap();
-                let key = make_key(file_name, header.game);
-                path.set_extension(ext.to_owned() + path.extension().unwrap().to_str().unwrap());
-                decrypt(key, header)
-                    .context(format!("Error while decrypting {}", path.display()))?;
-            } else {
-                let mut data: Vec<u8> = Vec::new();
-                reader.read_to_end(&mut data).unwrap();
-                let file_stem = path.file_stem().unwrap().to_str().unwrap();
-                let game = match &file_stem[file_stem.len() - 4..] {
-                    ".adk" => Game::Adk,
-                    ".dng" => Game::Dng,
-                    _ => return Ok(()),
-                };
-                path.set_file_name(
-                    file_stem[..file_stem.len() - 3].to_owned()
-                        + path.extension().unwrap().to_str().unwrap(),
-                );
-                let file_name = path.file_name().unwrap().to_str().unwrap();
-                let mut file = File::create(&path).context("could not create file {display}")?;
-                encrypt(make_key(file_name, game), data, game)
-                    .write(&mut file)
-                    .context(format!("could not write to {}", path.display()))?;
+            let file_name = path.file_name().unwrap().to_str().unwrap();
+            let data = match CompressedFile::read_args(&mut reader, (file_name,)) {
+                Ok(header) => {
+                    let ext = match header.game {
+                        Game::Adk => "adk.".to_owned(),
+                        Game::Dng => "dng.".to_owned(),
+                    };
+                    path.set_extension(ext + path.extension().unwrap().to_str().unwrap());
+                    header.data
+                }
+                Err(e) if !matches!(e, binrw::Error::BadMagic { .. }) => {
+                    return Err(e
+                        .with_context(format!("Error while decrypting {file_name}"))
+                        .into())
+                }
+                _ => {
+                    let file_stem = path.file_stem().unwrap().to_str().unwrap();
+                    let game = match &file_stem[file_stem.len() - 4..] {
+                        ".adk" => Game::Adk,
+                        ".dng" => Game::Dng,
+                        _ => return Ok(()),
+                    };
+                    path.set_file_name(
+                        file_stem[..file_stem.len() - 3].to_owned()
+                            + path.extension().unwrap().to_str().unwrap(),
+                    );
+                    let file_name = path.file_name().unwrap().to_str().unwrap();
+                    let mut data: Vec<u8> = Vec::new();
+                    reader.read_to_end(&mut data).unwrap();
+                    let mut cursor = std::io::Cursor::new(Vec::new());
+                    CompressedFile { game, data }.write_args(&mut cursor, (file_name,))?;
+                    cursor.into_inner()
+                }
             };
-            Ok(())
+            std::fs::write(&path, data).context(format!("could not write to {}", path.display()))
         })
         .find_any(Result::is_err)
         .map_or(Ok(()), |report| report)
@@ -221,22 +220,23 @@ fn is_valid() {
         .filter(|entry| entry.file_type().is_file())
         .map(|entry| -> Result<isize> {
             let mut reader = BufReader::new(File::open(entry.path()).unwrap());
-            if let Ok(header) = CompressedFile::read(&mut reader) {
-                let datalen = header.data.len();
-                let game = header.game;
-                let display = entry.path().display();
-                let file_name = entry.path().file_name().unwrap().to_str().unwrap();
-                let key = make_key(file_name, game);
-                let res = decrypt(key, header)
-                    .context(format!("Error occurred in 1. decryption of {display}"))?;
-
-                let file = encrypt(key, res, game);
-                let newdatalen = file.data.len();
-                decrypt(key, file)
-                    .context(format!("Error occurred in 2. decryption of {display}"))?;
-                return Ok(datalen as isize - newdatalen as isize);
+            let file_name = entry.path().file_name().unwrap().to_str().unwrap();
+            match CompressedFile::read_args(&mut reader, (file_name,)) {
+                Ok(header) => {
+                    let mut cursor = std::io::Cursor::new(Vec::new());
+                    header.write_args(&mut cursor, (file_name,))?;
+                    let inner = cursor.into_inner();
+                    let mut cursor = std::io::Cursor::new(inner.as_slice());
+                    CompressedFile::read_args(&mut cursor, (file_name,))
+                        .context(format!("Error occurred in 2. decryption of {file_name}"))?;
+                    Ok(entry.path().metadata().unwrap().len() as isize
+                        - cursor.into_inner().len() as isize)
+                }
+                Err(e) if !matches!(e, binrw::Error::BadMagic { .. }) => Err(e
+                    .with_context(format!("error in 1. decryption of {file_name}"))
+                    .into()),
+                _ => Ok(0),
             }
-            Ok(0)
         })
         .map(Result::unwrap)
         .sum::<isize>();
