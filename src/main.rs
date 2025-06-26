@@ -14,23 +14,23 @@ enum Game {
 }
 #[binrw]
 #[brw(little, magic = 0x06091812u32)]
-#[brw(import(val1:&str) )]
+#[brw(import(file_name: &str))]
 struct CompressedFile {
     game: Game,
     #[bw(calc = hash(data))]
     file_crc: u32,
     // #[bw(ignore, calc = make_key(val1, &game))]
     // key: [u8; 16],
-    #[br(assert(hash(&make_key(val1, &game)) == name_crc))]
-    #[bw(calc = hash(&make_key(val1, &game)))]
+    #[br(assert(hash(&make_key(file_name, &game)) == name_crc))]
+    #[bw(calc = hash(&make_key(file_name, game)))]
     name_crc: u32,
     #[bw(calc = data.len().try_into().unwrap())]
     size: u32,
     #[br(parse_with = until_eof)]
-    #[br(map = |x:Vec<u8>| decompress(&mut encrypt_decrypt(make_key(val1, &game), &x)))]
+    #[br(map = |x:Vec<u8>| decompress(&mut encrypt_decrypt(make_key(file_name, &game), &x)))]
     #[br(assert(size as usize == data.len()))]
     #[br(assert(file_crc == hash(&data)))]
-    #[bw(map = |x:&Vec<u8>| encrypt_decrypt(make_key(val1, &game), &compress_lzss(x)).collect::<Vec<u8>>())]
+    #[bw(map = |x:&Vec<u8>| encrypt_decrypt(make_key(file_name, game), &compress_lzss(x)).collect::<Vec<u8>>())]
     data: Vec<u8>,
 }
 
@@ -176,9 +176,9 @@ fn main() -> Result<()> {
         .filter(|entry| entry.file_type().is_file())
         .try_for_each(|entry| -> Result<()> {
             let mut path = entry.path().to_owned();
-            let mut reader = BufReader::new(File::open(entry.path()).unwrap());
+            let mut reader = BufReader::new(File::open(entry.path())?);
             let file_name = path.file_name().unwrap().to_str().unwrap();
-            let data = match CompressedFile::read_args(&mut reader, (file_name,)) {
+            let data = match CompressedFile::read_args(&mut BufReader::new(File::open(entry.path())?), (file_name,)) {
                 Ok(header) => {
                     let ext = match header.game {
                         Game::Adk => "adk.".to_owned(),
@@ -232,8 +232,7 @@ fn is_valid() {
                 Ok(header) => {
                     let mut cursor = std::io::Cursor::new(Vec::new());
                     header.write_args(&mut cursor, (file_name,))?;
-                    let inner = cursor.into_inner();
-                    let mut cursor = std::io::Cursor::new(inner.as_slice());
+                    let mut cursor = std::io::Cursor::new(cursor.get_ref());
                     CompressedFile::read_args(&mut cursor, (file_name,))
                         .context(format!("Error occurred in 2. decryption of {file_name}"))?;
                     Ok(entry.path().metadata().unwrap().len() as isize
