@@ -13,24 +13,19 @@ enum Game {
     Adk = u32::from_le_bytes(*b"sadk"),
 }
 #[binrw]
-#[brw(little, magic = 0x06091812u32)]
-#[brw(import(file_name: &str))]
+#[brw(little, magic = 0x06091812u32, import(file_name: &str))]
 struct CompressedFile {
     game: Game,
     #[bw(calc = hash(data))]
     file_crc: u32,
-    // #[bw(ignore, calc = make_key(val1, &game))]
-    // key: [u8; 16],
     #[br(assert(hash(&make_key(file_name, &game)) == name_crc))]
     #[bw(calc = hash(&make_key(file_name, game)))]
     name_crc: u32,
     #[bw(calc = data.len().try_into().unwrap())]
     size: u32,
-    #[br(parse_with = until_eof)]
-    #[br(map = |x:Vec<u8>| decompress(&mut encrypt_decrypt(make_key(file_name, &game), &x)))]
-    #[br(assert(size as usize == data.len()))]
-    #[br(assert(file_crc == hash(&data)))]
-    #[bw(map = |x:&Vec<u8>| encrypt_decrypt(make_key(file_name, game), &compress_lzss(x)).collect::<Vec<u8>>())]
+    #[br(parse_with = until_eof, map = |x:Vec<u8>| decompress(&mut encrypt_decrypt(make_key(file_name, &game), &x)))]
+    #[br(assert(size as usize == data.len()), assert(file_crc == hash(&data)))]
+    #[bw(map = |x:&Vec<u8>| encrypt_decrypt(make_key(file_name, game), &compress(x)).collect::<Vec<u8>>())]
     data: Vec<u8>,
 }
 
@@ -59,7 +54,6 @@ fn make_key(file_name: &str, game: &Game) -> [u8; 16] {
 fn decompress(iter: &mut impl Iterator<Item = u8>) -> Vec<u8> {
     let mut mode = 0u32;
     let mut totallen = 0;
-
     let code_iter = std::iter::from_fn(|| {
         if mode & 0x100 == 0 {
             mode = iter.next()? as u32 | 0xff00;
@@ -78,22 +72,18 @@ fn decompress(iter: &mut impl Iterator<Item = u8>) -> Vec<u8> {
         totallen += len;
         Some(LzssCode::Reference { len, pos })
     });
-
     let d = &mut LzssDecoder::with_dict(0x400, &[b' '; 0x400]);
     code_iter.decode(d).map(Result::unwrap).collect()
 }
 
 fn encrypt_decrypt(key: [u8; 16], data: &[u8]) -> impl Iterator<Item = u8> + '_ {
     let mut random = make_random(hash(&key));
-
     let flavor1: Vec<u8> = (0..(random.next() & 0x7F) + 0x80)
         .map(|_| random.next() as u8)
         .collect();
-
     let flavor2: Vec<u8> = (0..(random.next() & 0xF) + 0x11)
         .map(|_| random.next() as u8)
         .collect();
-
     let start = random.next() as usize % data.len();
     let step = (random.next() as usize & 0x1FFF) + 0x2000;
     data.iter()
@@ -109,44 +99,33 @@ fn encrypt_decrypt(key: [u8; 16], data: &[u8]) -> impl Iterator<Item = u8> + '_ 
         })
 }
 
-fn compress_lzss(u: &[u8]) -> Vec<u8> {
-    fn comparison(lhs: LzssCode, rhs: LzssCode) -> Ordering {
-        match (lhs, rhs) {
-            (LzssCode::Reference { len, pos: _ }, LzssCode::Reference { len: rlen, pos: _ }) => {
-                (rlen).cmp(&len)
-            }
-            (LzssCode::Symbol(_), LzssCode::Symbol(_)) => Ordering::Equal,
-            (_, LzssCode::Symbol(_)) => Ordering::Greater,
-            (LzssCode::Symbol(_), _) => Ordering::Less,
-        }
-    }
-
-    let encoder = &mut LzssEncoder::with_dict(comparison, 0x400, 18, 3, 0, &[b' '; 0x400]);
-    let cmp = u
-        .iter()
-        .cloned()
-        .encode(encoder, Action::Finish)
-        .map(Result::unwrap);
-
-    let mut comp = Vec::with_capacity(cmp.size_hint().0 * 2);
+fn compress(u: &[u8]) -> Vec<u8> {
+    use LzssCode::*;
+    let comparison = |lhs, rhs| match (lhs, rhs) {
+        (Reference { len, pos: _ }, Reference { len: rlen, pos: _ }) => (rlen).cmp(&len),
+        (Symbol(_), Symbol(_)) => Ordering::Equal,
+        (_, Symbol(_)) => Ordering::Greater,
+        (Symbol(_), _) => Ordering::Less,
+    };
+    let e = &mut LzssEncoder::with_dict(comparison, 0x400, 18, 3, 0, &[b' '; 0x400]);
+    let iter = u.iter().cloned().encode(e, Action::Finish);
+    let mut comp = Vec::with_capacity(iter.size_hint().0 * 2);
     let mut op_idx = 0;
     let mut op_code = 1u8;
-
     let mut currpos = 0;
-    cmp.for_each(|code| {
+    iter.map(Result::unwrap).for_each(|code| {
         if op_code == 1 {
             op_idx = comp.len();
             comp.push(0);
         }
         currpos += match code {
-            LzssCode::Symbol(b) => {
+            Symbol(b) => {
                 comp[op_idx] |= op_code;
                 comp.push(b);
                 1
             }
-            LzssCode::Reference { len, pos } => {
+            Reference { len, pos } => {
                 let abspos = (currpos - pos - 16 - 1) & 0x3ff;
-
                 comp.push(abspos as u8);
                 comp.push((abspos >> 4) as u8 & 0x30 | (len as u8 - 3));
                 len
@@ -178,7 +157,7 @@ fn main() -> Result<()> {
             let mut path = entry.path().to_owned();
             let mut reader = BufReader::new(File::open(entry.path())?);
             let file_name = path.file_name().unwrap().to_str().unwrap();
-            let data = match CompressedFile::read_args(&mut BufReader::new(File::open(entry.path())?), (file_name,)) {
+            let data = match CompressedFile::read_args(&mut reader, (file_name,)) {
                 Ok(header) => {
                     let ext = match header.game {
                         Game::Adk => "adk.".to_owned(),
