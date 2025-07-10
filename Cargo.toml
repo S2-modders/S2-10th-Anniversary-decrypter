@@ -2,6 +2,9 @@
 name = "decryptor_s2"
 version = "0.1.0"
 edition = "2024"
+description = "A library and cli for decrpting and encrpting S2 10th Anniversary assets"
+repository = "https://github.com/S2-modders/S2-10th-Anniversary-decrypter"
+license = "MIT"
 
 [lib]
 path = "src/lib.rs"
