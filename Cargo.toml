@@ -1,10 +1,12 @@
 [package]
-name = "decrypter_S2"
+name = "decryptor_s2"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
+
+[lib]
+path = "src/lib.rs"
 
 [dependencies]
-argh = "0.1.13"
 binrw = "0.15.0"
 compression = "0.1.5"
 crc32fast = "1.4.2"
