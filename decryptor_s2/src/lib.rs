@@ -1,12 +1,12 @@
-use binrw::{binrw, helpers::until_eof};
+use binrw::{binrw, helpers::until_eof, BinRead, BinWrite};
 use compression::prelude::{Action, DecodeExt, EncodeExt, LzssCode, LzssDecoder, LzssEncoder};
 use crc32fast::hash;
-use simple_eyre::eyre::Result;
-use std::cmp::Ordering;
+use simple_eyre::eyre::{eyre, Result};
 
 #[binrw]
 #[brw(repr = u32)]
 #[repr(u32)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Game {
     Dng = u32::from_le_bytes(*b"rc00"),
     Adk = u32::from_le_bytes(*b"sadk"),
@@ -14,7 +14,7 @@ pub enum Game {
 
 #[binrw]
 #[brw(little, magic = 0x06091812u32, import(file_name: &str))]
-pub struct CompressedFile {
+pub struct DecompressedFile {
     pub game: Game,
     #[bw(calc = hash(data))]
     file_crc: u32,
@@ -103,9 +103,9 @@ fn compress(u: &[u8]) -> Vec<u8> {
     use LzssCode::*;
     let comparison = |lhs, rhs| match (lhs, rhs) {
         (Reference { len, pos: _ }, Reference { len: rlen, pos: _ }) => (rlen).cmp(&len),
-        (Symbol(_), Symbol(_)) => Ordering::Equal,
-        (_, Symbol(_)) => Ordering::Greater,
-        (Symbol(_), _) => Ordering::Less,
+        (Symbol(_), Symbol(_)) => std::cmp::Ordering::Equal,
+        (_, Symbol(_)) => std::cmp::Ordering::Greater,
+        (Symbol(_), _) => std::cmp::Ordering::Less,
     };
     let e = &mut LzssEncoder::with_dict(comparison, 0x400, 18, 3, 2, &[b' '; 0x400]);
     let iter = u.iter().cloned().encode(e, Action::Finish);
@@ -134,4 +134,28 @@ fn compress(u: &[u8]) -> Vec<u8> {
         op_code = op_code.rotate_left(1);
     });
     res
+}
+
+pub fn decrypt(path: &std::path::Path) -> Result<Option<DecompressedFile>> {
+    let mut reader = binrw::io::BufReader::new(std::fs::File::open(path)?);
+    let os_str = path.file_name().ok_or(eyre!("Path {path:?} has no name"))?;
+    let file_name = os_str
+        .to_str()
+        .ok_or(eyre!("{os_str:?} can't be converted to a String"))?;
+    match DecompressedFile::read_args(&mut reader, (file_name,)) {
+        Ok(res) => Ok(Some(res)),
+        Err(e) if !matches!(e, binrw::Error::BadMagic { .. }) => Err(e.into()),
+        _ => Ok(None),
+    }
+}
+
+pub fn write_encrypted(path: &std::path::Path, game: Game, data: Vec<u8>) -> Result<()> {
+    let os_str = path.file_name().ok_or(eyre!("Path {path:?} has no name"))?;
+    let file_name = os_str
+        .to_str()
+        .ok_or(eyre!("{os_str:?} can't be converted to a String"))?;
+    let mut cursor = std::io::Cursor::new(Vec::new());
+    DecompressedFile { game, data }.write_args(&mut cursor, (file_name,))?;
+    std::fs::write(path, cursor.into_inner())?;
+    Ok(())
 }
