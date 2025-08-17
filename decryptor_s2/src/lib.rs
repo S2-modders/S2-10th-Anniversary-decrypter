@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use binrw::{BinRead, BinWrite, binrw, helpers::until_eof};
 use compression::prelude::{Action, DecodeExt, EncodeExt, LzssCode, LzssDecoder, LzssEncoder};
 use crc32fast::hash;
@@ -135,7 +137,8 @@ fn compress(u: &[u8]) -> Vec<u8> {
     res
 }
 
-pub fn decrypt(path: &std::path::Path) -> Result<Option<DecompressedFile>> {
+pub fn decrypt<P: AsRef<Path>>(path: P) -> Result<Option<DecompressedFile>> {
+    let path = path.as_ref();
     let mut reader = binrw::io::BufReader::new(std::fs::File::open(path)?);
     let os_str = path.file_name().ok_or(eyre!("Path {path:?} has no name"))?;
     let file_name = os_str
@@ -148,7 +151,8 @@ pub fn decrypt(path: &std::path::Path) -> Result<Option<DecompressedFile>> {
     }
 }
 
-pub fn write_encrypted(path: &std::path::Path, game: Game, data: Vec<u8>) -> Result<()> {
+pub fn write_encrypted<P: AsRef<Path>>(path: P, game: Game, data: Vec<u8>) -> Result<()> {
+    let path = path.as_ref();
     let os_str = path.file_name().ok_or(eyre!("Path {path:?} has no name"))?;
     let file_name = os_str
         .to_str()
