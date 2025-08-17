@@ -1,7 +1,7 @@
-use binrw::{binrw, helpers::until_eof, BinRead, BinWrite};
+use binrw::{BinRead, BinWrite, binrw, helpers::until_eof};
 use compression::prelude::{Action, DecodeExt, EncodeExt, LzssCode, LzssDecoder, LzssEncoder};
 use crc32fast::hash;
-use simple_eyre::eyre::{eyre, Result};
+use simple_eyre::eyre::{Result, eyre};
 
 #[binrw]
 #[brw(repr = u32)]
@@ -30,18 +30,17 @@ pub struct DecompressedFile {
 }
 
 fn rng(seed: u32) -> minstd::MINSTD0 {
-    let mut seed = seed & 0x7fffffff;
-    seed = (5..13 - seed.count_ones() as i32)
-        .fold(seed, |seed, i| seed | 1 << (17 + i - 2 * i * (i & 1)));
-    seed = (5..seed.count_ones() as i32 - 19)
-        .fold(seed, |seed, i| seed & !(1 << (17 + i - 2 * i * (i & 1))));
-    minstd::MINSTD0::seed(seed as i32)
+    let mut seed = seed as i32 & 0x7fffffff;
+    let ones = seed.count_ones() as i32;
+    seed = (5..13 - ones).fold(seed, |seed, i| seed | 1 << (17 + i - 2 * i * (i & 1)));
+    seed = (5..ones - 19).fold(seed, |seed, i| seed & !(1 << (17 + i - 2 * i * (i & 1))));
+    minstd::MINSTD0::seed(seed)
 }
 
 fn make_key(file: &str, game: &Game) -> [u8; 16] {
     let key = match game {
-        Game::Adk => 0xbd8cc2bd30674bf8b49b1bf9f6822ef4u128.to_be_bytes(),
-        Game::Dng => 0xc95946cad9f04f0aa100aab8cbe8db6bu128.to_be_bytes(),
+        Game::Adk => *uuid::uuid!("bd8cc2bd-3067-4bf8-b49b-1bf9f6822ef4").as_bytes(),
+        Game::Dng => *uuid::uuid!("c95946ca-d9f0-4f0a-a100-aab8cbe8db6b").as_bytes(),
     };
     let file = file.to_ascii_lowercase();
     let mut rng = rng(hash(&encoding_rs::WINDOWS_1252.encode(&file).0));
@@ -53,7 +52,7 @@ fn make_key(file: &str, game: &Game) -> [u8; 16] {
 
 fn decompress(iter: &mut impl Iterator<Item = u8>) -> Vec<u8> {
     let mut mode = 0u32;
-    let mut totallen = 0;
+    let mut totallen: usize = 0;
     let code_iter = std::iter::from_fn(|| {
         if mode & 0x100 == 0 {
             mode = iter.next()? as u32 | 0xff00;
@@ -67,7 +66,7 @@ fn decompress(iter: &mut impl Iterator<Item = u8>) -> Vec<u8> {
         let next = iter.next()? as usize;
         let bufferpos = curr | ((next & 0x30) << 4);
         let len = 3 + (next & 0xf);
-        let pos = ((totallen - bufferpos - 16) & 0x3ff).wrapping_sub(1);
+        let pos = totallen.wrapping_sub(bufferpos + 16 + 1) & 0x3ff;
         mode >>= 1;
         totallen += len;
         Some(LzssCode::Reference { len, pos })
@@ -112,7 +111,7 @@ fn compress(u: &[u8]) -> Vec<u8> {
     let mut res = Vec::with_capacity(iter.size_hint().0 * 2);
     let mut op_idx = 0;
     let mut op_code = 1u8;
-    let mut currpos = 0;
+    let mut currpos: usize = 0;
     iter.map(Result::unwrap).for_each(|code| {
         if op_code == 1 {
             op_idx = res.len();
@@ -125,7 +124,7 @@ fn compress(u: &[u8]) -> Vec<u8> {
                 1
             }
             Reference { len, pos } => {
-                let abspos = (currpos - pos - 16 - 1) & 0x3ff;
+                let abspos = currpos.wrapping_sub(pos + 16 + 1) & 0x3ff;
                 res.push(abspos as u8);
                 res.push((abspos >> 4) as u8 & 0x30 | (len as u8 - 3));
                 len

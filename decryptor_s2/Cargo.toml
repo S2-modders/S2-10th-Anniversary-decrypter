@@ -1,6 +1,6 @@
 [package]
 name = "decryptor_s2"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 description = "A library and cli for decrpting and encrpting S2 10th Anniversary assets"
 repository = "https://github.com/S2-modders/S2-10th-Anniversary-decrypter"
@@ -16,3 +16,4 @@ crc32fast = "1.4.2"
 encoding_rs = "0.8.35"
 minstd = "0.9.4"
 simple-eyre = "0.3.1"
+uuid = "1.17.0"
